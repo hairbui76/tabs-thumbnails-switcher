@@ -71,5 +71,3 @@ If you specifically want **Ctrl+Tab**:
 - **MRU** — The background script tracks the order you activate tabs; “previous” tab is the second entry in that list.
 - **Quick switch** — The `commands` entry `quick-previous-mru` calls the same MRU “previous tab” action from the service worker (no overlay).
 - **Thumbnails** — The visible tab is captured (JPEG) when it becomes active; that image is used in the switcher.
-- **Hold-to-open menu** — The content script uses `keydown` / `keyup` and a timer; Chrome’s `commands` cannot measure hold duration, so the menu gesture stays in the page.
-- **Restricted / special pages** — The **Quick switch** shortcut still works globally in Chrome. The **in-page** hold may not run on `chrome://` etc.; use the shortcut or the toolbar to open the menu on injectable pages.
