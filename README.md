@@ -31,25 +31,7 @@ A Chrome extension that switches tabs using **most recently used (MRU)** order, 
    - **Open tab switcher (thumbnail menu)** — default **Ctrl+Shift+Q** (same chord as the in-page long-press; see `key-gesture.js`)
 3. The manifest defines these in [`manifest.json`](manifest.json) under `commands`.
 
-**Why not plain Ctrl+E for quick switch?** `suggested_key` in the manifest is only a *hint* Chrome may apply on first install. It skips combinations that are **built-in browser shortcuts** (e.g. **Ctrl+E** on Windows) so that row can look like **Chưa đặt** / *Not set* if we put **Ctrl+E** in the manifest. The default is **Ctrl+Shift+E** so it can bind on a fresh install. You can still try other keys in `chrome://extensions/shortcuts`; for **plain Ctrl+E**, use an **OS-level remap** (e.g. **AutoHotkey**) to send **Ctrl+Shift+E** (or whatever you assigned for quick switch).
-
-This runs in the **service worker** and works in Chrome **even on pages** where a content script cannot (e.g. you can rebind in Shortcuts; it is not limited to normal web pages the way a page-injected key handler is).
-
 **Ctrl+Tab:** The normal shortcuts UI usually will not assign **Ctrl+Tab** to an extension (Chrome reserves it). See [Can I use Ctrl+Tab for quick switch?](#can-i-use-ctrltab-for-quick-switch) below for an **advanced** console workaround on `chrome://extensions/shortcuts`, or use **OS-level remapping** to send your chosen shortcut.
-
-## In-page: long-press to open the menu (default: Ctrl+Shift+Q)
-
-Long-press is implemented in the page by [`key-gesture.js`](key-gesture.js) (hold duration is not available to `chrome.commands`). The default chord matches the **Open tab switcher** command so behavior is consistent.
-
-| What you do | What happens |
-|-------------|----------------|
-| **Command: Open tab switcher (thumbnail menu)** (default **Ctrl+Shift+Q** in the manifest) | Opens the full switcher; works from the service worker, including on many `chrome://` / restricted pages where a content script may not. |
-| **Press and keep holding** Ctrl+Shift+Q (or your edited `G` in `key-gesture.js`) for the hold time | Same menu from the in-page long-press where the script runs. **A short** press + release (before the hold time) does **not** open the menu by itself—use the **open-tab-switcher** command or a longer hold. |
-| **Quick switch to previous tab** (default **Ctrl+Shift+E**) | Jumps to the previous MRU tab with **no** overlay. |
-| **Click the extension icon** | Always opens the **full** thumbnail switcher. |
-
-- **Hold time** and in-page **chord**: `HOLD_MS` and `G` in [`key-gesture.js`](key-gesture.js), then reload the extension.
-- If a shortcut conflicts with Chrome or the OS, change it in `chrome://extensions/shortcuts` or in `G`.
 
 ### When the overlay is open
 
@@ -91,36 +73,3 @@ If you specifically want **Ctrl+Tab**:
 - **Thumbnails** — The visible tab is captured (JPEG) when it becomes active; that image is used in the switcher.
 - **Hold-to-open menu** — The content script uses `keydown` / `keyup` and a timer; Chrome’s `commands` cannot measure hold duration, so the menu gesture stays in the page.
 - **Restricted / special pages** — The **Quick switch** shortcut still works globally in Chrome. The **in-page** hold may not run on `chrome://` etc.; use the shortcut or the toolbar to open the menu on injectable pages.
-
-## Permissions
-
-| Permission | Reason |
-|------------|--------|
-| `tabs` | Read tab info for the list and to activate tabs |
-| `activeTab` | Capture the visible area for thumbnails |
-| `scripting` + `<all_urls>` | Inject the gesture script, overlay, and styles |
-| `storage` | Persist MRU order if the service worker is restarted |
-
-## File structure
-
-```
-tabs-thumbnails-switcher/
-  manifest.json
-  background.js
-  debug-helpers.js
-  key-gesture.js
-  overlay-keys.js
-  content.js
-  content.css
-  options.html
-  options.js
-  icons/
-  images/
-    menu_preview.png
-    options_preview.png
-  README.md
-```
-
-## License
-
-MIT

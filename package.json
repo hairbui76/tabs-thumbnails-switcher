@@ -1,0 +1,28 @@
+{
+  "name": "tabs-thumbnails-switcher",
+  "version": "1.6.0",
+  "description": "Chrome extension: MRU-ordered tab switching with a thumbnail overlay (Manifest V3).",
+  "private": true,
+  "license": "MIT",
+  "author": "Hai Bui Duc",
+  "homepage": "https://github.com/hairbui76/tabs-thumbnails-switcher#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hairbui76/tabs-thumbnails-switcher.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hairbui76/tabs-thumbnails-switcher/issues"
+  },
+  "keywords": [
+    "browser-extension",
+    "chrome-extension",
+    "manifest-v3",
+    "mru",
+    "tab-switcher",
+    "tabs",
+    "thumbnails"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -2,8 +2,17 @@
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "packages": {
     ".": {
-      "release-type": "simple",
+      "release-type": "node",
       "include-component-in-tag": false,
+      "exclude-paths": [
+        ".github",
+        "README.md",
+        "images/",
+        "LICENSE",
+        "release-please-config.json",
+        ".release-please-manifest.json",
+        "CHANGELOG.md"
+      ],
       "extra-files": [
         {
           "type": "json",
