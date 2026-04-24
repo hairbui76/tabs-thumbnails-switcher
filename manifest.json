@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tab Thumbnails Switcher",
-  "version": "1.5.5",
+  "version": "1.6.0",
   "description": "Quick switch: Ctrl+Shift+E. Open menu: Ctrl+Shift+Q. (Chrome blocks plain Ctrl+E from suggested_key.) In-page long-press matches the menu in key-gesture.js.",
   "permissions": [
     "tabs",
@@ -38,15 +38,27 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["debug-helpers.js", "key-gesture.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "debug-helpers.js",
+        "key-gesture.js"
+      ],
       "run_at": "document_start",
       "all_frames": true
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["overlay-keys.js", "content.js"],
-      "css": ["content.css"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "overlay-keys.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
       "run_at": "document_end",
       "all_frames": true
     }
