@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "Tab Thumbnails Switcher",
+  "version": "1.5.5",
+  "description": "Quick switch: Ctrl+Shift+E. Open menu: Ctrl+Shift+Q. (Chrome blocks plain Ctrl+E from suggested_key.) In-page long-press matches the menu in key-gesture.js.",
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Open tab switcher (thumbnail menu)"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "commands": {
+    "quick-previous-mru": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+E"
+      },
+      "description": "Quick switch: previous tab (MRU) — no menu"
+    },
+    "open-tab-switcher": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Q"
+      },
+      "description": "Open tab switcher (thumbnail menu)"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["debug-helpers.js", "key-gesture.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["overlay-keys.js", "content.js"],
+      "css": ["content.css"],
+      "run_at": "document_end",
+      "all_frames": true
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

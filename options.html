@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tab Thumbnails Switcher — Options</title>
+  <style>
+    body {
+      font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      max-width: 40rem;
+      margin: 1.5rem;
+      color: #e4e4e7;
+      background: #18181b;
+    }
+
+    h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin: 0 0 1rem;
+    }
+
+    h2 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #fafafa;
+    }
+
+    kbd {
+      font: 0.9em ui-monospace, monospace;
+      padding: 0.1em 0.35em;
+      border-radius: 4px;
+      border: 1px solid #52525b;
+      background: #27272a;
+      color: #e4e4e7;
+    }
+
+    p {
+      color: #a1a1aa;
+      margin: 0 0 0.75rem;
+    }
+
+    label {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      cursor: pointer;
+    }
+
+    input[type="checkbox"] {
+      width: 1.1rem;
+      height: 1.1rem;
+    }
+
+    a {
+      color: #818cf8;
+    }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.5rem 0.75rem;
+      margin: 0.4rem 0;
+    }
+
+    .row label {
+      min-width: 9.5rem;
+      color: #d4d4d8;
+      font-weight: 500;
+    }
+
+    .row .val {
+      flex: 1;
+      min-width: 10rem;
+      font-family: ui-monospace, monospace;
+      color: #a1a1aa;
+      padding: 0.2rem 0.4rem;
+      background: #27272a;
+      border-radius: 6px;
+    }
+
+    .row button {
+      padding: 0.35rem 0.6rem;
+      border-radius: 6px;
+      border: 1px solid #3f3f46;
+      background: #3f3f46;
+      color: #fafafa;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    .row button:hover {
+      background: #52525b;
+    }
+
+    .msg {
+      min-height: 1.2rem;
+      font-size: 13px;
+      color: #818cf8;
+      margin: 0.5rem 0;
+    }
+
+    .about {
+      margin-top: 1rem;
+      border-top: 1px solid #3f3f46;
+    }
+
+    .about dl {
+      margin: 0;
+      display: grid;
+      grid-template-columns: 7.5rem 1fr;
+      gap: 0.5rem 1rem;
+      align-items: start;
+    }
+
+    .about dt {
+      margin: 0;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #71717a;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .about dd {
+      margin: 0;
+      color: #d4d4d8;
+      word-break: break-word;
+    }
+
+    .about dd.desc {
+      color: #a1a1aa;
+      font-size: 0.92rem;
+      line-height: 1.5;
+    }
+
+    .tts-advanced {
+      margin-top: 1rem;
+      border-top: 1px solid #3f3f46;
+    }
+
+    .tts-advanced pre {
+      margin: 0.5rem 0 0.75rem;
+      padding: 0.75rem 1rem;
+      overflow-x: auto;
+      font-size: 12px;
+      line-height: 1.45;
+      color: #e4e4e7;
+      background: #27272a;
+      border: 1px solid #3f3f46;
+      border-radius: 8px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .tts-advanced code {
+      font-family: ui-monospace, monospace;
+      font-size: 0.9em;
+      color: #d4d4d8;
+    }
+
+    .tts-advanced .note {
+      font-size: 0.85rem;
+      color: #71717a;
+      margin: 0;
+    }
+
+    .tts-advanced ol {
+      color: #a1a1aa;
+      margin: 0 0 0.75rem;
+      padding-left: 1.25rem;
+    }
+
+    .tts-advanced ol li {
+      margin-bottom: 0.35rem;
+    }
+  </style>
+</head>
+
+<body>
+  <h1 id="pageTitle">Options</h1>
+  <p>Logging appears in the service worker (Extensions → Inspect views) and the page devtools for each tab, only when this is on.</p>
+  <label>
+    <input type="checkbox" id="ttsDebug" />
+    <span>Enable debug console (verbose logs)</span>
+  </label>
+
+  <h2>Overlay (when the tab switcher is open)</h2>
+  <p>Click <strong>Change…</strong>, then press the key combination for each action. Use <strong>Escape</strong> to cancel a capture. If “Use arrow keys to navigate” is on, <strong>Arrow Up</strong> / <strong>Arrow Down</strong> also move the selection (plain arrows, no modifiers).</p>
+  <p class="msg" id="capMsg" aria-live="polite"></p>
+  <div class="row"><label for="bNext">Next tab</label><span class="val" id="vNext"></span><button type="button" id="bNext">Change…</button></div>
+  <div class="row"><label for="bPrev">Previous tab</label><span class="val" id="vPrev"></span><button type="button" id="bPrev">Change…</button></div>
+  <div class="row"><label for="bSw">Switch to selected</label><span class="val" id="vSw"></span><button type="button" id="bSw">Change…</button></div>
+  <div class="row"><label for="bCl">Close overlay</label><span class="val" id="vCl"></span><button type="button" id="bCl">Change…</button></div>
+  <label>
+    <input type="checkbox" id="alsoArrows" />
+    <span>Also use Arrow Up / Arrow Down to navigate (in addition to the keys above)</span>
+  </label>
+
+  <section class="tts-advanced" aria-labelledby="ctrlTabHeading">
+    <h2 id="ctrlTabHeading">Quick switch: <kbd>Ctrl</kbd>+<kbd>Tab</kbd> (advanced)</h2>
+    <p>Chrome’s shortcut editor usually will not assign <strong>Ctrl+Tab</strong> to an extension (the browser uses it for built‑in tab switching). You can still try to bind it to <strong>Quick switch: previous tab (MRU)</strong> using Chrome’s internal API from the shortcuts page only:</p>
+    <ol>
+      <li>Open <a href="chrome://extensions/shortcuts" target="_blank" rel="noopener noreferrer"><code>chrome://extensions/shortcuts</code></a> (copy the URL if the link does not open from this page).</li>
+      <li>Turn on <strong>Developer mode</strong> (top right on <code>chrome://extensions</code>).</li>
+      <li>Open <strong>Developer Tools</strong> for that tab (e.g. right‑click → Inspect, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd>).</li>
+      <li>In the <strong>Console</strong>, paste the snippet below (your extension id is filled in automatically) and press Enter.</li>
+    </ol>
+    <pre id="ctrlTabSnippet" aria-label="Console snippet for Ctrl+Tab quick switch"></pre>
+    <p class="note">Uses <code>chrome.developerPrivate</code>, which exists on this internal page when Developer mode is on. It is not a stable public API—Chrome may change behavior. Only paste code you trust.</p>
+  </section>
+
+  <section class="about" aria-labelledby="aboutHeading">
+    <h2 id="aboutHeading">About this extension</h2>
+    <dl>
+      <dt>Name</dt>
+      <dd id="aboutName"></dd>
+      <dt>Version</dt>
+      <dd id="aboutVersion"></dd>
+      <dt>Updated</dt>
+      <dd id="aboutUpdated"></dd>
+      <dt>Description</dt>
+      <dd id="aboutDesc" class="desc"></dd>
+      <dt>Contact</dt>
+      <dd><a id="aboutContact" href="mailto:buiduchai0706vn@gmail.com">buiduchai0706vn@gmail.com</a></dd>
+    </dl>
+  </section>
+
+  <script src="overlay-keys.js"></script>
+  <script src="options.js"></script>
+</body>
+
+</html>
