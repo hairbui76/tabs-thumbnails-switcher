@@ -3,14 +3,31 @@ const LOG = self.__ttsCreateTtsLog("background");
 
 /** Session key for JPEG data URLs; survives MV3 service worker sleep, clears when browser closes. */
 const TTS_THUMBNAILS_SESSION_KEY = "ttsTabThumbnails";
+/** Session key for our own "last activated at" stamps (fallback for Chrome < 121 tab.lastAccessed). */
+const TTS_LAST_ACCESSED_SESSION_KEY = "ttsLastAccessed";
 
 let mruList = [];
 let thumbnails = {};
+let lastAccessed = {};
 let captureTimer = null;
+
+/**
+ * The service worker is torn down when idle, so every event handler must wait for
+ * the session state to be re-read before touching mruList — otherwise the first
+ * command after a wake-up sees an empty list and silently does nothing.
+ */
+let readyPromise = null;
+function ready() {
+  if (!readyPromise) readyPromise = initMruList();
+  return readyPromise;
+}
 
 async function saveMruList() {
   try {
-    await chrome.storage.session.set({ mruList });
+    await chrome.storage.session.set({
+      mruList,
+      [TTS_LAST_ACCESSED_SESSION_KEY]: lastAccessed,
+    });
   } catch (e) {
     LOG("saveMruList error:", e.message);
   }
@@ -18,7 +35,11 @@ async function saveMruList() {
 
 async function loadMruList() {
   try {
-    const data = await chrome.storage.session.get(["mruList", TTS_THUMBNAILS_SESSION_KEY]);
+    const data = await chrome.storage.session.get([
+      "mruList",
+      TTS_THUMBNAILS_SESSION_KEY,
+      TTS_LAST_ACCESSED_SESSION_KEY,
+    ]);
     if (data.mruList) {
       mruList = data.mruList;
       LOG("loaded MRU list:", mruList);
@@ -30,9 +51,19 @@ async function loadMruList() {
       }
       LOG("restored tab thumbnails:", Object.keys(thumbnails).length);
     }
+    const stamps = data[TTS_LAST_ACCESSED_SESSION_KEY];
+    if (stamps && typeof stamps === "object") {
+      for (const [k, v] of Object.entries(stamps)) {
+        if (typeof v === "number") lastAccessed[k] = v;
+      }
+    }
   } catch (e) {
     LOG("loadMruList error:", e.message);
   }
+}
+
+function lastAccessedOf(tab) {
+  return tab.lastAccessed || lastAccessed[tab.id] || 0;
 }
 
 async function persistThumbnails() {
@@ -56,18 +87,59 @@ function setToolbarTitleWithVersion() {
 async function initMruList() {
   LOG("initializing...");
   setToolbarTitleWithVersion();
-  await loadMruList();
-  if (mruList.length === 0) {
-    const tabs = await chrome.tabs.query({ currentWindow: true });
-    const activeTab = tabs.find((t) => t.active);
-    mruList = tabs.map((t) => t.id);
-    if (activeTab) {
-      mruList = [activeTab.id, ...mruList.filter((id) => id !== activeTab.id)];
+  try {
+    await loadMruList();
+    if (mruList.length === 0) {
+      const tabs = await chrome.tabs.query({ currentWindow: true });
+      const activeTab = tabs.find((t) => t.active);
+      mruList = tabs
+        .slice()
+        .sort((a, b) => lastAccessedOf(b) - lastAccessedOf(a))
+        .map((t) => t.id);
+      if (activeTab) {
+        mruList = [activeTab.id, ...mruList.filter((id) => id !== activeTab.id)];
+      }
+      await saveMruList();
+      LOG("built initial MRU list:", mruList);
     }
-    await saveMruList();
-    LOG("built initial MRU list:", mruList);
+  } catch (e) {
+    // Never leave ready() permanently rejected — a degraded list still beats a dead shortcut.
+    LOG("init failed:", e && e.message);
   }
   LOG("ready");
+}
+
+/**
+ * Re-syncs mruList with reality: drops closed tabs and puts the tab Chrome really
+ * considers active at the head. Events can be missed while the worker is asleep,
+ * and a stale head makes "switch to previous" resolve to the current tab (a no-op).
+ */
+async function reconcileMruList() {
+  const allTabs = await chrome.tabs.query({});
+  const byId = new Map(allTabs.map((t) => [t.id, t]));
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+  let next = mruList.filter((id) => byId.has(id));
+  // Tabs we never saw activated (worker was asleep, or they predate it) go after the
+  // tracked ones, newest visit first — not in window/index order.
+  const unknown = allTabs
+    .filter((t) => !next.includes(t.id))
+    .sort((a, b) => lastAccessedOf(b) - lastAccessedOf(a));
+  for (const tab of unknown) next.push(tab.id);
+  if (activeTab) {
+    next = [activeTab.id, ...next.filter((id) => id !== activeTab.id)];
+  }
+
+  const changed = next.length !== mruList.length || next.some((id, i) => id !== mruList[i]);
+  if (changed) {
+    LOG("reconciled MRU list:", mruList, "->", next);
+    mruList = next;
+    for (const key of Object.keys(lastAccessed)) {
+      if (!byId.has(Number(key))) delete lastAccessed[key];
+    }
+    await saveMruList();
+  }
+  return { allTabs, byId, activeTab };
 }
 
 function captureTab(windowId, tabId) {
@@ -96,7 +168,9 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
   const { tabId, windowId } = activeInfo;
   LOG("tab activated:", tabId, "window:", windowId);
 
+  await ready();
   mruList = [tabId, ...mruList.filter((id) => id !== tabId)];
+  lastAccessed[tabId] = Date.now();
   await saveMruList();
 
   captureTab(windowId, tabId);
@@ -104,14 +178,17 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   LOG("tab removed:", tabId);
+  await ready();
   mruList = mruList.filter((id) => id !== tabId);
   delete thumbnails[tabId];
+  delete lastAccessed[tabId];
   await saveMruList();
   await persistThumbnails();
 });
 
 chrome.tabs.onCreated.addListener(async (tab) => {
   LOG("tab created:", tab.id);
+  await ready();
   if (!mruList.includes(tab.id)) {
     mruList.push(tab.id);
     await saveMruList();
@@ -125,48 +202,158 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-function quickSwitchToPreviousMru() {
-  if (mruList.length < 2) {
-    LOG("quick-mru: need at least 2 tabs");
-    return;
+/** Most recently used tab of the active window that is not the active tab itself. */
+async function findPreviousTab() {
+  const { byId, activeTab } = await reconcileMruList();
+  if (!activeTab) {
+    LOG("quick-mru: no active tab");
+    return null;
   }
-  const prev = mruList[1];
-  LOG("quick-mru: switch to", prev);
-  chrome.tabs.update(prev, { active: true });
+  for (const id of mruList) {
+    const tab = byId.get(id);
+    if (tab && tab.id !== activeTab.id && tab.windowId === activeTab.windowId) return tab;
+  }
+  // MRU knows nothing usable (fresh worker, single-tab history) — fall back to timestamps.
+  const candidates = [...byId.values()]
+    .filter((t) => t.id !== activeTab.id && t.windowId === activeTab.windowId)
+    .sort((a, b) => lastAccessedOf(b) - lastAccessedOf(a));
+  return candidates[0] || null;
 }
 
-async function showSwitcher() {
-  const [activeTab] = await chrome.tabs.query({
-    active: true,
-    currentWindow: true,
+async function quickSwitchToPreviousMru() {
+  await ready();
+  const prev = await findPreviousTab();
+  if (!prev) {
+    LOG("quick-mru: no other tab in this window");
+    return;
+  }
+  LOG("quick-mru: switch to", prev.id);
+  try {
+    await chrome.tabs.update(prev.id, { active: true });
+  } catch (e) {
+    LOG("quick-mru: switch failed:", e && e.message);
+  }
+}
+
+/** Registrable domain-ish key used to group tabs of the same site together. */
+function domainKey(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    if (host) return host;
+  } catch (e) {}
+  return url || "";
+}
+
+/**
+ * The sort behind the toolbar's Sort button, in priority order:
+ *   1. the site you used most recently comes first (a whole domain moves as a block),
+ *   2. sites that tie fall back to alphabetical domain,
+ *   3. inside one domain, the most recently visited tab comes first.
+ */
+function sortByDomainThenVisit(tabs) {
+  const groupRecency = new Map();
+  for (const tab of tabs) {
+    const key = domainKey(tab.url);
+    const at = lastAccessedOf(tab);
+    if (!groupRecency.has(key) || groupRecency.get(key) < at) groupRecency.set(key, at);
+  }
+  return tabs.slice().sort((a, b) => {
+    const ka = domainKey(a.url);
+    const kb = domainKey(b.url);
+    if (ka !== kb) {
+      const byRecency = (groupRecency.get(kb) || 0) - (groupRecency.get(ka) || 0);
+      if (byRecency !== 0) return byRecency;
+      return ka.localeCompare(kb);
+    }
+    return lastAccessedOf(b) - lastAccessedOf(a);
   });
+}
+
+/**
+ * Splits the strip into runs that a tab may not leave: the pinned block, each tab
+ * group, and each stretch of ungrouped tabs between them. Sorting inside a run keeps
+ * every tab at an index it already belongs to, so pinning and tab groups survive.
+ * With no groups (the common case) the whole unpinned strip is a single run.
+ */
+function stripBlocks(windowTabs) {
+  const ordered = windowTabs.slice().sort((a, b) => a.index - b.index);
+  const blocks = [];
+  let current = null;
+  for (const tab of ordered) {
+    const key = tab.pinned ? "pinned" : "group:" + (tab.groupId != null ? tab.groupId : -1);
+    if (!current || current.key !== key) {
+      current = { key, start: tab.index, tabs: [] };
+      blocks.push(current);
+    }
+    current.tabs.push(tab);
+  }
+  return blocks;
+}
+
+/** Rearranges the real Chrome tab strip to match the sort. */
+async function sortWindowTabs() {
+  await ready();
+  const { allTabs, activeTab } = await reconcileMruList();
+  if (!activeTab) {
+    LOG("sort: no active tab");
+    return false;
+  }
+  const windowTabs = allTabs.filter((t) => t.windowId === activeTab.windowId);
+
+  try {
+    for (const block of stripBlocks(windowTabs)) {
+      if (block.tabs.length < 2) continue;
+      const sorted = sortByDomainThenVisit(block.tabs);
+      if (sorted.every((tab, i) => tab.id === block.tabs[i].id)) continue;
+      await chrome.tabs.move(sorted.map((t) => t.id), { index: block.start });
+      LOG("sorted block", block.key, "at index", block.start, "-", sorted.length, "tabs");
+    }
+    return true;
+  } catch (e) {
+    // Chrome refuses moves while the user is dragging a tab; nothing to recover from.
+    LOG("sort: move failed:", e && e.message);
+    return false;
+  }
+}
+
+async function showSwitcher(opts) {
+  const order = (opts && opts.order) || "mru";
+  await ready();
+  const { allTabs, activeTab } = await reconcileMruList();
   if (!activeTab) {
     LOG("no active tab found");
     return;
   }
   LOG("active tab:", activeTab.id, activeTab.url);
 
-  const allTabs = await chrome.tabs.query({ currentWindow: true });
-  LOG("total tabs in window:", allTabs.length);
+  const windowTabs = allTabs.filter((t) => t.windowId === activeTab.windowId);
+  LOG("total tabs in window:", windowTabs.length);
 
   const tabMap = {};
-  for (const tab of allTabs) {
+  for (const tab of windowTabs) {
     tabMap[tab.id] = {
       id: tab.id,
       title: tab.title || "Untitled",
       url: tab.url || "",
       favIconUrl: tab.favIconUrl || "",
       thumbnail: thumbnails[tab.id] || null,
+      lastAccessed: lastAccessedOf(tab),
     };
   }
 
-  const sortedTabs = mruList
-    .filter((id) => tabMap[id])
-    .map((id) => tabMap[id]);
-
-  for (const tab of allTabs) {
-    if (!sortedTabs.find((t) => t.id === tab.id)) {
-      sortedTabs.push(tabMap[tab.id]);
+  let sortedTabs;
+  if (order === "index") {
+    // Right after a sort the overlay must mirror the tab strip, not the MRU list.
+    sortedTabs = windowTabs
+      .slice()
+      .sort((a, b) => a.index - b.index)
+      .map((tab) => tabMap[tab.id]);
+  } else {
+    sortedTabs = mruList.filter((id) => tabMap[id]).map((id) => tabMap[id]);
+    for (const tab of windowTabs) {
+      if (!sortedTabs.find((t) => t.id === tab.id)) {
+        sortedTabs.push(tabMap[tab.id]);
+      }
     }
   }
 
@@ -182,9 +369,7 @@ async function showSwitcher() {
     LOG("show-switcher message sent successfully");
   } catch (e) {
     LOG("failed to show overlay:", e.message, "— falling back to direct switch");
-    if (mruList.length >= 2) {
-      chrome.tabs.update(mruList[1], { active: true });
-    }
+    await quickSwitchToPreviousMru();
   }
 }
 
@@ -223,7 +408,7 @@ chrome.action.onClicked.addListener(async (tab) => {
 chrome.commands.onCommand.addListener((command) => {
   if (command === "quick-previous-mru") {
     LOG("command: quick previous MRU (no menu)");
-    quickSwitchToPreviousMru();
+    void quickSwitchToPreviousMru();
     return;
   }
   if (command === "open-tab-switcher") {
@@ -237,6 +422,15 @@ chrome.runtime.onMessage.addListener((message) => {
     void showSwitcher();
     return;
   }
+  if (message.action === "quick-previous-mru") {
+    void quickSwitchToPreviousMru();
+    return;
+  }
+  if (message.action === "sort-tabs") {
+    LOG("sort-tabs requested from overlay");
+    void sortWindowTabs().then(() => showSwitcher({ order: "index" }));
+    return;
+  }
   if (message.action === "open-options") {
     void chrome.runtime.openOptionsPage().catch((e) => {
       LOG("openOptionsPage failed:", e && e.message);
@@ -245,11 +439,17 @@ chrome.runtime.onMessage.addListener((message) => {
   }
   if (message.action === "switch-tab") {
     LOG("switching to tab", message.tabId);
-    chrome.tabs.update(message.tabId, { active: true });
+    chrome.tabs.update(message.tabId, { active: true }).catch((e) => {
+      LOG("switch-tab failed:", e && e.message);
+    });
     if (message.windowId) {
       chrome.windows.update(message.windowId, { focused: true });
     }
   }
 });
 
-initMruList();
+// Re-read session state as soon as the worker starts, and again on every wake-up
+// path (each handler awaits ready()), so no shortcut ever runs against an empty list.
+chrome.runtime.onStartup.addListener(() => void ready());
+chrome.runtime.onInstalled.addListener(() => void ready());
+void ready();

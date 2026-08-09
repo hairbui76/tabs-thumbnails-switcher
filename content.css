@@ -77,7 +77,14 @@
   color: rgba(255, 255, 255, 0.32);
 }
 
-.tts-header-settings {
+.tts-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.tts-header-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -94,14 +101,28 @@
   transition: background 0.12s ease, color 0.12s ease;
 }
 
-.tts-header-settings:hover {
+.tts-header-btn:hover {
   background: rgba(255, 255, 255, 0.08);
   color: rgba(255, 255, 255, 0.85);
 }
 
-.tts-header-settings:focus-visible {
+.tts-header-btn:active {
+  background: rgba(99, 131, 255, 0.22);
+  color: #dbe2ff;
+}
+
+.tts-header-btn:focus-visible {
   outline: 2px solid rgba(99, 131, 255, 0.7);
   outline-offset: 1px;
+}
+
+.tts-visited {
+  margin-left: 8px;
+  opacity: 0.75;
+}
+
+.tts-visited::before {
+  content: "· ";
 }
 
 .tts-list {
@@ -268,13 +289,18 @@
     color: rgba(0, 0, 0, 0.4);
   }
 
-  .tts-header-settings {
+  .tts-header-btn {
     color: rgba(0, 0, 0, 0.45);
   }
 
-  .tts-header-settings:hover {
+  .tts-header-btn:hover {
     background: rgba(0, 0, 0, 0.06);
     color: rgba(0, 0, 0, 0.85);
+  }
+
+  .tts-header-btn:active {
+    background: rgba(59, 91, 219, 0.14);
+    color: #2338a8;
   }
 
   .tts-card:hover {

@@ -38,11 +38,33 @@ A Chrome extension that switches tabs using **most recently used (MRU)** order, 
 | Key | Action |
 |-----|--------|
 | **Gear** (header, top right) | Opens the extension **options** page in a new tab. |
+| **Sort** (header, left of the gear) | Reorders the list **and the real Chrome tab strip** — see [Sorting](#sorting). |
+| S | Same as the Sort button |
 | Tab / Arrow Down | Move selection down |
 | Shift+Tab / Arrow Up | Move selection up |
 | Enter | Switch to selected tab |
 | Escape | Close the switcher |
 | Click a row | Switch to that tab |
+
+If a configured navigation key is rebound to **S**, that binding wins and the sort shortcut is skipped.
+
+## Sorting
+
+The **Sort** button in the switcher header (or **S** while it is open) applies one combined order, in this priority:
+
+1. **Most recently used site first** — a whole domain moves as a block, led by the site you were just on.
+2. **Same site grouped together** — domains that tie on recency fall back to alphabetical order.
+3. **Newest visit first** — within one domain, the tab you visited most recently comes first.
+
+This is not just a view: the **real Chrome tab strip is reordered** to match, via `chrome.tabs.move`, and the switcher then shows the new strip order.
+
+Tabs never leave the run they belong to, so nothing gets scrambled:
+
+- **Pinned tabs** are sorted among themselves and stay in front.
+- **Tab groups** stay intact and in place — sorting happens inside each group.
+- Each stretch of **ungrouped** tabs is sorted within itself. With no tab groups (the common case) that is the whole strip, so the sort is global.
+
+Tabs never activated in this session have no visit time and land at the end of their site block.
 
 ## Can I use Ctrl+Tab for quick switch?
 
