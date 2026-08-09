@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.7.0...v1.8.0) (2026-08-09)
+
+
+### Features
+
+* sort button that reorders the real tab strip ([24caeba](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/24caeba5e381c774836b12b40dd637e2ba3ea15f))
+
 ## [1.7.0](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.6.0...v1.7.0) (2026-04-24)
 
 
