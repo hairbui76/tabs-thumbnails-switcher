@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.8.0...v1.9.0) (2026-08-14)
+
+
+### Features
+
+* lead the sort with the 10 most recently visited tabs ([3821543](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/3821543ea187b8b7ea3ec7f0943902e89e448513))
+
 ## [1.8.0](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.7.0...v1.8.0) (2026-08-09)
 
 
