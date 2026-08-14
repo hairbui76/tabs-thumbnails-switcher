@@ -19,7 +19,7 @@
 
   const OVERLAY_ID = "tts-overlay";
   const SORT_TITLE =
-    "Sort tabs — most recently used site first, tabs of the same site grouped, newest visit first. Also reorders the real Chrome tabs.";
+    "Sort tabs — the 10 most recently visited first, then grouped by site, title, visit time. Also reorders the real Chrome tabs.";
 
   let selectedIndex = 0;
   let tabList = [];

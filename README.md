@@ -50,21 +50,25 @@ If a configured navigation key is rebound to **S**, that binding wins and the so
 
 ## Sorting
 
-The **Sort** button in the switcher header (or **S** while it is open) applies one combined order, in this priority:
+The **Sort** button in the switcher header (or **S** while it is open) applies one combined order:
 
-1. **Most recently used site first** — a whole domain moves as a block, led by the site you were just on.
-2. **Same site grouped together** — domains that tie on recency fall back to alphabetical order.
-3. **Newest visit first** — within one domain, the tab you visited most recently comes first.
+**The 10 most recently visited tabs lead**, newest first — the window's global top 10, so what you were just working on stays within reach.
+
+**Everything after them** is sorted by:
+
+1. **Domain** (A→Z) — tabs of the same site end up next to each other.
+2. **Tab title** (A→Z) — within one site.
+3. **Newest visit first** — only as a tie-break on identical titles.
 
 This is not just a view: the **real Chrome tab strip is reordered** to match, via `chrome.tabs.move`, and the switcher then shows the new strip order.
 
 Tabs never leave the run they belong to, so nothing gets scrambled:
 
-- **Pinned tabs** are sorted among themselves and stay in front.
+- **Pinned tabs** are sorted among themselves and stay in front. They are excluded from the recent-10 head, since they already sit at the front permanently and would otherwise starve the rest of the strip of head slots.
 - **Tab groups** stay intact and in place — sorting happens inside each group.
 - Each stretch of **ungrouped** tabs is sorted within itself. With no tab groups (the common case) that is the whole strip, so the sort is global.
 
-Tabs never activated in this session have no visit time and land at the end of their site block.
+The recent head is picked once per window, then each run leads with whichever of those tabs it happens to contain — so you get one top 10 overall, not a top 10 per group. Tabs never activated in this session have no visit time, are not eligible for the head, and land at the end of their site block.
 
 ## Can I use Ctrl+Tab for quick switch?
 

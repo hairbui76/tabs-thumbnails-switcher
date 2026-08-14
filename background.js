@@ -244,29 +244,47 @@ function domainKey(url) {
   return url || "";
 }
 
-/**
- * The sort behind the toolbar's Sort button, in priority order:
- *   1. the site you used most recently comes first (a whole domain moves as a block),
- *   2. sites that tie fall back to alphabetical domain,
- *   3. inside one domain, the most recently visited tab comes first.
- */
-function sortByDomainThenVisit(tabs) {
-  const groupRecency = new Map();
-  for (const tab of tabs) {
-    const key = domainKey(tab.url);
-    const at = lastAccessedOf(tab);
-    if (!groupRecency.has(key) || groupRecency.get(key) < at) groupRecency.set(key, at);
-  }
-  return tabs.slice().sort((a, b) => {
-    const ka = domainKey(a.url);
-    const kb = domainKey(b.url);
-    if (ka !== kb) {
-      const byRecency = (groupRecency.get(kb) || 0) - (groupRecency.get(ka) || 0);
-      if (byRecency !== 0) return byRecency;
-      return ka.localeCompare(kb);
-    }
-    return lastAccessedOf(b) - lastAccessedOf(a);
+/** How many of the most recently visited tabs are kept up front, ordered by visit time. */
+const SORT_RECENT_HEAD = 10;
+
+/** Comparator for the tail of the sort: domain → tab title → most recent visit. */
+function byDomainTitleVisit(a, b) {
+  const ka = domainKey(a.url);
+  const kb = domainKey(b.url);
+  if (ka !== kb) return ka.localeCompare(kb);
+  const byTitle = (a.title || "").localeCompare(b.title || "", undefined, {
+    sensitivity: "base",
   });
+  if (byTitle !== 0) return byTitle;
+  return lastAccessedOf(b) - lastAccessedOf(a);
+}
+
+/**
+ * The SORT_RECENT_HEAD most recently visited tabs of the window, as a Set of ids.
+ * Chosen once across the whole window so the head is a global top-10, not a top-10 per
+ * run. Pinned tabs are excluded: they already sit at the front permanently, and letting
+ * them claim head slots would starve the rest of the strip. Tabs never activated in
+ * this session have no visit time and are not eligible.
+ */
+function recentHeadIds(windowTabs) {
+  const ranked = windowTabs
+    .filter((t) => !t.pinned && lastAccessedOf(t) > 0)
+    .sort((a, b) => lastAccessedOf(b) - lastAccessedOf(a))
+    .slice(0, SORT_RECENT_HEAD);
+  return new Set(ranked.map((t) => t.id));
+}
+
+/**
+ * The sort behind the toolbar's Sort button: whichever of these tabs are in the
+ * window's recent head lead, newest visit first; everything after them is grouped by
+ * domain, then by tab title, then by visit time.
+ */
+function sortForStrip(tabs, headIds) {
+  const head = tabs
+    .filter((t) => headIds.has(t.id))
+    .sort((a, b) => lastAccessedOf(b) - lastAccessedOf(a));
+  const tail = tabs.filter((t) => !headIds.has(t.id)).sort(byDomainTitleVisit);
+  return head.concat(tail);
 }
 
 /**
@@ -299,11 +317,12 @@ async function sortWindowTabs() {
     return false;
   }
   const windowTabs = allTabs.filter((t) => t.windowId === activeTab.windowId);
+  const headIds = recentHeadIds(windowTabs);
 
   try {
     for (const block of stripBlocks(windowTabs)) {
       if (block.tabs.length < 2) continue;
-      const sorted = sortByDomainThenVisit(block.tabs);
+      const sorted = sortForStrip(block.tabs, headIds);
       if (sorted.every((tab, i) => tab.id === block.tabs[i].id)) continue;
       await chrome.tabs.move(sorted.map((t) => t.id), { index: block.start });
       LOG("sorted block", block.key, "at index", block.start, "-", sorted.length, "tabs");
