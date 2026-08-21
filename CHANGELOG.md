@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.9.0...v1.10.0) (2026-08-21)
+
+
+### Features
+
+* show the open-tab count on the icon and in the switcher ([38529a8](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/38529a8a0905e373620c810a39507bbfe7387fdc))
+
 ## [1.9.0](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.8.0...v1.9.0) (2026-08-14)
 
 
