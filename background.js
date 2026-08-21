@@ -74,19 +74,47 @@ async function persistThumbnails() {
   }
 }
 
-function setToolbarTitleWithVersion() {
+/** Badge digits Chrome can still render legibly; past this we show "999+". */
+const BADGE_MAX = 999;
+
+/**
+ * Paints one window's open-tab count onto the toolbar icon, and spells it out in the
+ * tooltip where there is room. Scoped to a single window because that is what the
+ * switcher itself lists.
+ *
+ * Pass the windowId from a window event; on tab events "currentWindow" is enough and
+ * is what the rest of this worker already resolves against.
+ */
+async function updateTabCountBadge(windowId) {
   try {
+    const tabs = await chrome.tabs.query(
+      windowId != null ? { windowId } : { currentWindow: true }
+    );
+    const count = tabs.length;
+    const text = count > BADGE_MAX ? BADGE_MAX + "+" : count ? String(count) : "";
+    await chrome.action.setBadgeText({ text });
+    await chrome.action.setBadgeBackgroundColor({ color: "#3b5bdb" });
+    // Chrome 110+; without it Chrome picks a contrasting colour itself.
+    if (chrome.action.setBadgeTextColor) {
+      await chrome.action.setBadgeTextColor({ color: "#ffffff" });
+    }
+
     const v = chrome.runtime.getManifest().version;
-    const base = "Open tab switcher (thumbnail menu)";
-    chrome.action.setTitle({ title: v ? base + " · v" + v : base });
+    const parts = ["Open tab switcher (thumbnail menu)"];
+    parts.push(count === 1 ? "1 tab open" : count + " tabs open");
+    if (v) parts.push("v" + v);
+    await chrome.action.setTitle({ title: parts.join(" · ") });
+
+    LOG("badge:", text || "(empty)", "window:", windowId != null ? windowId : "current");
   } catch (e) {
-    LOG("setToolbarTitleWithVersion:", e && e.message);
+    // A window closing out from under us leaves nothing to count; the next event repaints.
+    LOG("updateTabCountBadge:", e && e.message);
   }
 }
 
 async function initMruList() {
   LOG("initializing...");
-  setToolbarTitleWithVersion();
+  void updateTabCountBadge();
   try {
     await loadMruList();
     if (mruList.length === 0) {
@@ -174,6 +202,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
   await saveMruList();
 
   captureTab(windowId, tabId);
+  void updateTabCountBadge(windowId);
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
@@ -184,6 +213,7 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   delete lastAccessed[tabId];
   await saveMruList();
   await persistThumbnails();
+  void updateTabCountBadge();
 });
 
 chrome.tabs.onCreated.addListener(async (tab) => {
@@ -193,7 +223,20 @@ chrome.tabs.onCreated.addListener(async (tab) => {
     mruList.push(tab.id);
     await saveMruList();
   }
+  void updateTabCountBadge();
 });
+
+// A tab dragged between windows changes the count of both, and the badge only ever
+// shows the focused one — so repaint on either half of the move.
+chrome.tabs.onAttached.addListener(() => void updateTabCountBadge());
+chrome.tabs.onDetached.addListener(() => void updateTabCountBadge());
+
+chrome.windows.onFocusChanged.addListener((windowId) => {
+  if (windowId === chrome.windows.WINDOW_ID_NONE) return;
+  void updateTabCountBadge(windowId);
+});
+
+chrome.windows.onRemoved.addListener(() => void updateTabCountBadge());
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === "complete" && tab.active) {
@@ -335,6 +378,30 @@ async function sortWindowTabs() {
   }
 }
 
+/**
+ * Tab totals for the overlay header. Only normal browser windows are counted: popups,
+ * app windows and devtools carry tabs of their own that nobody thinks of as open tabs.
+ * Falls back to the raw totals if the windows API is unavailable.
+ */
+async function tabCounts(allTabs, windowId) {
+  let counted = allTabs;
+  let windows = 0;
+  try {
+    const normal = await chrome.windows.getAll({ windowTypes: ["normal"] });
+    const ids = new Set(normal.map((w) => w.id));
+    counted = allTabs.filter((t) => ids.has(t.windowId));
+    windows = ids.size;
+  } catch (e) {
+    LOG("tabCounts: windows.getAll failed:", e && e.message);
+    windows = new Set(allTabs.map((t) => t.windowId)).size;
+  }
+  return {
+    window: counted.filter((t) => t.windowId === windowId).length,
+    total: counted.length,
+    windows,
+  };
+}
+
 async function showSwitcher(opts) {
   const order = (opts && opts.order) || "mru";
   await ready();
@@ -376,6 +443,7 @@ async function showSwitcher(opts) {
     }
   }
 
+  const counts = await tabCounts(allTabs, activeTab.windowId);
   LOG("sending", sortedTabs.length, "tabs to overlay, thumbnails cached:", Object.keys(thumbnails).length);
 
   try {
@@ -384,6 +452,7 @@ async function showSwitcher(opts) {
       action: "show-switcher",
       tabs: sortedTabs,
       activeTabId: activeTab.id,
+      counts,
     });
     LOG("show-switcher message sent successfully");
   } catch (e) {

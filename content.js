@@ -24,6 +24,7 @@
   let selectedIndex = 0;
   let tabList = [];
   let currentTabId = null;
+  let tabCounts = null;
   var overlayKeyState = OK.merge(null);
 
   function pullOverlayKeys() {
@@ -64,6 +65,37 @@
     const hours = Math.floor(mins / 60);
     if (hours < 24) return hours + "h ago";
     return Math.floor(hours / 24) + "d ago";
+  }
+
+  function plural(n, word) {
+    return n + " " + word + (n === 1 ? "" : "s");
+  }
+
+  /**
+   * Fills the header's tab-count pill. The window count is taken from the list we were
+   * handed so it can never disagree with the rows on screen; the cross-window total
+   * only appears when there is more than one window to talk about.
+   */
+  function paintCounts(overlay) {
+    const el = overlay.querySelector(".tts-header-count");
+    const extra = overlay.querySelector(".tts-header-total");
+    if (!el) {
+      LOG("paintCounts: no count element under the overlay yet");
+      return;
+    }
+
+    const inWindow = tabList.length;
+    el.textContent = plural(inWindow, "tab");
+
+    const total = tabCounts && tabCounts.total;
+    const windows = tabCounts && tabCounts.windows;
+    if (extra) {
+      const showTotal = windows > 1 && total > inWindow;
+      extra.textContent = showTotal ? plural(total, "tab") + " in " + plural(windows, "window") : "";
+      extra.hidden = !showTotal;
+    }
+    el.title = plural(inWindow, "tab") + " in this window";
+    if (windows > 1) el.title += ", " + plural(total, "tab") + " across " + plural(windows, "window");
   }
 
   function requestSort() {
@@ -146,14 +178,16 @@
   }
 
   /** Refresh an already-open overlay in place (used after a sort) — no rebuild flash. */
-  function updateTabs(overlay, tabs, activeTabId) {
+  function updateTabs(overlay, tabs, activeTabId, counts) {
     const keepId = tabList[selectedIndex] && tabList[selectedIndex].id;
     tabList = tabs;
     currentTabId = activeTabId;
+    tabCounts = counts || tabCounts;
     const i = tabList.findIndex((t) => t.id === keepId);
     selectedIndex = i >= 0 ? i : 0;
     const list = overlay.querySelector(".tts-list");
     renderList(list);
+    paintCounts(overlay);
     scrollSelectedIntoView(list);
     LOG("overlay list refreshed, selected index:", selectedIndex);
   }
@@ -176,11 +210,12 @@
     return btn;
   }
 
-  function buildOverlay(tabs, activeTabId) {
+  function buildOverlay(tabs, activeTabId, counts) {
     LOG("building overlay with", tabs.length, "tabs");
     removeOverlay();
     tabList = tabs;
     currentTabId = activeTabId;
+    tabCounts = counts || null;
     selectedIndex = tabs.length > 1 ? 1 : 0;
 
     const overlay = document.createElement("div");
@@ -198,10 +233,22 @@
     const headerMain = document.createElement("div");
     headerMain.className = "tts-header-main";
 
+    const topLine = document.createElement("div");
+    topLine.className = "tts-header-line";
+
     const title = document.createElement("span");
     title.className = "tts-header-title";
     title.textContent = "Switch Tab";
-    headerMain.appendChild(title);
+    topLine.appendChild(title);
+
+    const count = document.createElement("span");
+    count.className = "tts-header-count";
+    topLine.appendChild(count);
+
+    headerMain.appendChild(topLine);
+
+    const subLine = document.createElement("div");
+    subLine.className = "tts-header-line";
 
     let verText = "";
     try {
@@ -211,8 +258,15 @@
       const ver = document.createElement("span");
       ver.className = "tts-header-version";
       ver.textContent = "v" + verText;
-      headerMain.appendChild(ver);
+      subLine.appendChild(ver);
     }
+
+    const total = document.createElement("span");
+    total.className = "tts-header-total";
+    total.hidden = true;
+    subLine.appendChild(total);
+
+    headerMain.appendChild(subLine);
 
     header.appendChild(headerMain);
 
@@ -260,6 +314,8 @@
     container.appendChild(hint);
 
     overlay.appendChild(container);
+    // After the container is attached — paintCounts looks the pill up through `overlay`.
+    paintCounts(overlay);
     document.documentElement.appendChild(overlay);
 
     requestAnimationFrame(() => {
@@ -371,6 +427,7 @@
     tabList = [];
     selectedIndex = 0;
     currentTabId = null;
+    tabCounts = null;
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -382,8 +439,8 @@
     if (message.action === "show-switcher") {
       LOG("show-switcher received with", message.tabs.length, "tabs");
       const open = document.getElementById(OVERLAY_ID);
-      if (open) updateTabs(open, message.tabs, message.activeTabId);
-      else buildOverlay(message.tabs, message.activeTabId);
+      if (open) updateTabs(open, message.tabs, message.activeTabId, message.counts);
+      else buildOverlay(message.tabs, message.activeTabId, message.counts);
     }
   });
 })();

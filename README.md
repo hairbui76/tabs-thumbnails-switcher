@@ -38,6 +38,7 @@ A Chrome extension that switches tabs using **most recently used (MRU)** order, 
 | Key | Action |
 |-----|--------|
 | **Gear** (header, top right) | Opens the extension **options** page in a new tab. |
+| **Tab count** (header, next to the title) | How many tabs are open — see [Tab count](#tab-count). |
 | **Sort** (header, left of the gear) | Reorders the list **and the real Chrome tab strip** — see [Sorting](#sorting). |
 | S | Same as the Sort button |
 | Tab / Arrow Down | Move selection down |
@@ -47,6 +48,14 @@ A Chrome extension that switches tabs using **most recently used (MRU)** order, 
 | Click a row | Switch to that tab |
 
 If a configured navigation key is rebound to **S**, that binding wins and the sort shortcut is skipped.
+
+## Tab count
+
+The **toolbar icon carries a badge** with the number of tabs open in the focused window, repainted as tabs open, close, move between windows, or when you switch windows. Past 999 it reads `999+`. The icon's tooltip spells the same number out, next to the version.
+
+The switcher header shows it too: a **`12 tabs`** pill next to the title, taken from the list on screen so the two can never disagree. When more than one window is open, a muted line under it adds the cross-window total — `30 tabs in 3 windows`. Hover the pill for both numbers at once.
+
+Only normal browser windows are counted; popups, app windows and devtools carry tabs of their own that nobody thinks of as open tabs.
 
 ## Sorting
 

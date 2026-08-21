@@ -77,6 +77,40 @@
   color: rgba(255, 255, 255, 0.32);
 }
 
+.tts-header-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.tts-header-count {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: #dbe2ff;
+  background: rgba(99, 131, 255, 0.18);
+  border: 1px solid rgba(99, 131, 255, 0.4);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: default;
+}
+
+.tts-header-total {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.28);
+  white-space: nowrap;
+}
+
+.tts-header-total[hidden] {
+  display: none;
+}
+
 .tts-header-actions {
   display: flex;
   align-items: center;
@@ -287,6 +321,21 @@
 
   .tts-header-title {
     color: rgba(0, 0, 0, 0.4);
+  }
+
+  /* The dark defaults for these two are near-white; without an override they vanish. */
+  .tts-header-version {
+    color: rgba(0, 0, 0, 0.32);
+  }
+
+  .tts-header-count {
+    color: #2338a8;
+    background: rgba(59, 91, 219, 0.12);
+    border-color: rgba(59, 91, 219, 0.35);
+  }
+
+  .tts-header-total {
+    color: rgba(0, 0, 0, 0.35);
   }
 
   .tts-header-btn {
