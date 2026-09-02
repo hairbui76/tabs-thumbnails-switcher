@@ -1,10 +1,12 @@
 (function () {
   /**
-   * ISO date (YYYY-MM-DD) shown on the About section. Kept current by release-please
-   * through the annotation below, which is why options.js is listed in that tool's
-   * extra-files — hand-maintaining this drifted four months and three releases.
+   * ISO date (YYYY-MM-DD) shown on the About section. This value is a placeholder: the
+   * release workflow rewrites this exact line when it packages the zip, so what users
+   * install always carries the real release date. release-please cannot do it — its
+   * generic updater only understands version annotations, not dates — and maintaining
+   * it by hand drifted four months and three releases.
    */
-  var TTS_RELEASE_DATE_ISO = "2026-09-03"; // x-release-please-date
+  var TTS_RELEASE_DATE_ISO = "2026-09-03";
 
   var g = self;
   var sk = g.TTS_STORAGE_KEY_OVERLAY_KEYS;

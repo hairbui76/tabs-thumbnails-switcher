@@ -29,6 +29,17 @@ jobs:
         run: |
           TAG="${{ steps.release.outputs.tag_name }}"
           ZIP="tabs-thumbnails-switcher-${TAG}.zip"
+
+          # The About section's "Updated" date. release-please cannot maintain it (its
+          # generic updater only rewrites version annotations, not dates), so stamp it
+          # here: the repo keeps a placeholder, the shipped zip carries the real date.
+          DATE=$(date -u +%Y-%m-%d)
+          sed -i "s/var TTS_RELEASE_DATE_ISO = \"[0-9][0-9-]*\";/var TTS_RELEASE_DATE_ISO = \"${DATE}\";/" options.js
+          grep -q "var TTS_RELEASE_DATE_ISO = \"${DATE}\";" options.js || {
+            echo "::error::could not stamp TTS_RELEASE_DATE_ISO into options.js"
+            exit 1
+          }
+
           zip -r "$ZIP" \
             manifest.json \
             background.js \
