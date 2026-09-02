@@ -1,6 +1,10 @@
 (function () {
-  /** ISO date (YYYY-MM-DD) shown on the About section; bump when you ship a release. */
-  var TTS_RELEASE_DATE_ISO = "2026-04-24";
+  /**
+   * ISO date (YYYY-MM-DD) shown on the About section. Kept current by release-please
+   * through the annotation below, which is why options.js is listed in that tool's
+   * extra-files — hand-maintaining this drifted four months and three releases.
+   */
+  var TTS_RELEASE_DATE_ISO = "2026-09-03"; // x-release-please-date
 
   var g = self;
   var sk = g.TTS_STORAGE_KEY_OVERLAY_KEYS;
