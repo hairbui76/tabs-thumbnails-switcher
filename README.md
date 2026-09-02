@@ -4,9 +4,13 @@ A Chrome extension that switches tabs using **most recently used (MRU)** order, 
 
 ## Screenshots
 
-| ![Tab switcher overlay with thumbnails and shortcuts](images/menu_preview.png) | ![Extension options: overlay keys, Ctrl+Tab note, about](images/options_preview.png) |
-| :---: | :---: |
-| *Figure 1 — Tab switcher overlay: MRU-ordered tabs with thumbnails, version under the title, settings gear, and keyboard hints.* | *Figure 2 — Options page: debug logging toggle, overlay navigation keys, Ctrl+Tab advanced console snippet, and about metadata.* |
+![Tab switcher overlay: MRU-ordered tabs with thumbnails, a tab-count pill, and Sort and settings buttons](images/menu_preview.png)
+
+*Figure 1 — Tab switcher overlay. The tab-count pill and version sit beside the title, Sort and settings top right. Each row carries a favicon, title, domain and last-visit stamp, and a thumbnail; the current tab is tagged and the selection is outlined. Keyboard hints run along the bottom.*
+
+![Options page: debug toggle, overlay key bindings, tab count and sort notes, and the advanced Ctrl+Tab snippet](images/options_preview.png)
+
+*Figure 2 — Options page. Left: debug logging toggle, the four rebindable overlay keys, and what the tab count and Sort button do. Right: the advanced Ctrl+Tab console snippet with your extension id filled in.*
 
 ## Installation
 
