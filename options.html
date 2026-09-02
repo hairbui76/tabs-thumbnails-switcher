@@ -8,10 +8,23 @@
   <style>
     body {
       font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      max-width: 40rem;
-      margin: 1.5rem;
+      width: 100%;
+      margin: 0;
+      padding: 0;
       color: #e4e4e7;
       background: #18181b;
+    }
+
+    #container {
+      width: 100%;
+      display: flex;
+      gap: 1.5rem;
+    }
+
+    #container>section {
+      flex: 1;
+      padding: 1rem;
+      width: 50%;
     }
 
     h1 {
@@ -102,8 +115,9 @@
     }
 
     .about {
-      margin-top: 1rem;
       border-top: 1px solid #3f3f46;
+      padding: 1rem;
+      padding-top: 0;
     }
 
     .about dl {
@@ -133,11 +147,6 @@
       color: #a1a1aa;
       font-size: 0.92rem;
       line-height: 1.5;
-    }
-
-    .tts-advanced {
-      margin-top: 1rem;
-      border-top: 1px solid #3f3f46;
     }
 
     .tts-advanced pre {
@@ -179,43 +188,46 @@
 </head>
 
 <body>
-  <h1 id="pageTitle">Options</h1>
-  <p>Logging appears in the service worker (Extensions → Inspect views) and the page devtools for each tab, only when this is on.</p>
-  <label>
-    <input type="checkbox" id="ttsDebug" />
-    <span>Enable debug console (verbose logs)</span>
-  </label>
+  <div id="container">
+    <section>
+      <h1 id="pageTitle">Options</h1>
+      <p>Logging appears in the service worker (Extensions → Inspect views) and the page devtools for each tab, only when this is on.</p>
+      <label>
+        <input type="checkbox" id="ttsDebug" />
+        <span>Enable debug console (verbose logs)</span>
+      </label>
 
-  <h2>Overlay (when the tab switcher is open)</h2>
-  <p>Click <strong>Change…</strong>, then press the key combination for each action. Use <strong>Escape</strong> to cancel a capture. If “Use arrow keys to navigate” is on, <strong>Arrow Up</strong> / <strong>Arrow Down</strong> also move the selection (plain arrows, no modifiers).</p>
-  <p class="msg" id="capMsg" aria-live="polite"></p>
-  <div class="row"><label for="bNext">Next tab</label><span class="val" id="vNext"></span><button type="button" id="bNext">Change…</button></div>
-  <div class="row"><label for="bPrev">Previous tab</label><span class="val" id="vPrev"></span><button type="button" id="bPrev">Change…</button></div>
-  <div class="row"><label for="bSw">Switch to selected</label><span class="val" id="vSw"></span><button type="button" id="bSw">Change…</button></div>
-  <div class="row"><label for="bCl">Close overlay</label><span class="val" id="vCl"></span><button type="button" id="bCl">Change…</button></div>
-  <label>
-    <input type="checkbox" id="alsoArrows" />
-    <span>Also use Arrow Up / Arrow Down to navigate (in addition to the keys above)</span>
-  </label>
+      <h2>Overlay (when the tab switcher is open)</h2>
+      <p>Click <strong>Change…</strong>, then press the key combination for each action. Use <strong>Escape</strong> to cancel a capture. If “Use arrow keys to navigate” is on, <strong>Arrow Up</strong> / <strong>Arrow Down</strong> also move the selection (plain arrows, no modifiers).</p>
+      <p class="msg" id="capMsg" aria-live="polite"></p>
+      <div class="row"><label for="bNext">Next tab</label><span class="val" id="vNext"></span><button type="button" id="bNext">Change…</button></div>
+      <div class="row"><label for="bPrev">Previous tab</label><span class="val" id="vPrev"></span><button type="button" id="bPrev">Change…</button></div>
+      <div class="row"><label for="bSw">Switch to selected</label><span class="val" id="vSw"></span><button type="button" id="bSw">Change…</button></div>
+      <div class="row"><label for="bCl">Close overlay</label><span class="val" id="vCl"></span><button type="button" id="bCl">Change…</button></div>
+      <label>
+        <input type="checkbox" id="alsoArrows" />
+        <span>Also use Arrow Up / Arrow Down to navigate (in addition to the keys above)</span>
+      </label>
 
-  <h2>Tab count</h2>
-  <p>The toolbar icon shows a <strong>badge with the number of tabs open in the focused window</strong> (<code>999+</code> past 999), and its tooltip spells the number out. The switcher header repeats it as a pill next to the title, plus a cross-window total when you have more than one window open. Only normal browser windows count &mdash; not popups, app windows or devtools.</p>
+      <h2>Tab count</h2>
+      <p>The toolbar icon shows a <strong>badge with the number of tabs open in the focused window</strong> (<code>999+</code> past 999), and its tooltip spells the number out. The switcher header repeats it as a pill next to the title, plus a cross-window total when you have more than one window open. Only normal browser windows count &mdash; not popups, app windows or devtools.</p>
 
-  <h2>Sort button</h2>
-  <p>The switcher header has a <strong>Sort</strong> button next to the gear (or press <kbd>S</kbd> while the switcher is open). The <strong>10 most recently visited tabs</strong> lead, newest first; everything after them is grouped by <strong>domain</strong> → <strong>tab title</strong> → <strong>visit time</strong>. This also moves the real tabs in the Chrome tab strip. Pinned tabs and tab groups are preserved — sorting happens inside each of them, so nothing leaves its group.</p>
-
-  <section class="tts-advanced" aria-labelledby="ctrlTabHeading">
-    <h2 id="ctrlTabHeading">Quick switch: <kbd>Ctrl</kbd>+<kbd>Tab</kbd> (advanced)</h2>
-    <p>Chrome’s shortcut editor usually will not assign <strong>Ctrl+Tab</strong> to an extension (the browser uses it for built‑in tab switching). You can still try to bind it to <strong>Quick switch: previous tab (MRU)</strong> using Chrome’s internal API from the shortcuts page only:</p>
-    <ol>
-      <li>Open <a href="chrome://extensions/shortcuts" target="_blank" rel="noopener noreferrer"><code>chrome://extensions/shortcuts</code></a> (copy the URL if the link does not open from this page).</li>
-      <li>Turn on <strong>Developer mode</strong> (top right on <code>chrome://extensions</code>).</li>
-      <li>Open <strong>Developer Tools</strong> for that tab (e.g. right‑click → Inspect, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd>).</li>
-      <li>In the <strong>Console</strong>, paste the snippet below (your extension id is filled in automatically) and press Enter.</li>
-    </ol>
-    <pre id="ctrlTabSnippet" aria-label="Console snippet for Ctrl+Tab quick switch"></pre>
-    <p class="note">Uses <code>chrome.developerPrivate</code>, which exists on this internal page when Developer mode is on. It is not a stable public API—Chrome may change behavior. Only paste code you trust.</p>
-  </section>
+      <h2>Sort button</h2>
+      <p>The switcher header has a <strong>Sort</strong> button next to the gear (or press <kbd>S</kbd> while the switcher is open). The <strong>10 most recently visited tabs</strong> lead, newest first; everything after them is grouped by <strong>domain</strong> → <strong>tab title</strong> → <strong>visit time</strong>. This also moves the real tabs in the Chrome tab strip. Pinned tabs and tab groups are preserved — sorting happens inside each of them, so nothing leaves its group.</p>
+    </section>
+    <section class="tts-advanced" aria-labelledby="ctrlTabHeading">
+      <h2 id="ctrlTabHeading">Quick switch: <kbd>Ctrl</kbd>+<kbd>Tab</kbd> (advanced)</h2>
+      <p>Chrome’s shortcut editor usually will not assign <strong>Ctrl+Tab</strong> to an extension (the browser uses it for built‑in tab switching). You can still try to bind it to <strong>Quick switch: previous tab (MRU)</strong> using Chrome’s internal API from the shortcuts page only:</p>
+      <ol>
+        <li>Open <a href="chrome://extensions/shortcuts" target="_blank" rel="noopener noreferrer"><code>chrome://extensions/shortcuts</code></a> (copy the URL if the link does not open from this page).</li>
+        <li>Turn on <strong>Developer mode</strong> (top right on <code>chrome://extensions</code>).</li>
+        <li>Open <strong>Developer Tools</strong> for that tab (e.g. right‑click → Inspect, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd>).</li>
+        <li>In the <strong>Console</strong>, paste the snippet below (your extension id is filled in automatically) and press Enter.</li>
+      </ol>
+      <pre id="ctrlTabSnippet" aria-label="Console snippet for Ctrl+Tab quick switch"></pre>
+      <p class="note">Uses <code>chrome.developerPrivate</code>, which exists on this internal page when Developer mode is on. It is not a stable public API—Chrome may change behavior. Only paste code you trust.</p>
+    </section>
+  </div>
 
   <section class="about" aria-labelledby="aboutHeading">
     <h2 id="aboutHeading">About this extension</h2>
