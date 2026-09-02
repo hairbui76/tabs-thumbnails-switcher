@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.11.0](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.10.0...v1.11.0) (2026-09-02)
+
+
+### Features
+
+* lay the options page out in two columns ([8c22155](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/8c22155fb67e5385df8091f679379ffae3168baf))
+
+
+### Bug Fixes
+
+* describe what the extension does in the manifest ([a5e9917](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/a5e991795cd7daad92e5e7abe2c6796beccc09c1))
+* stamp the About date at package time, not via release-please ([ab1ba9e](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/ab1ba9edcb93d867fbdb0ec6197b0edbc9f1ad78))
+* stop the About "Updated" date going stale ([f29e660](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/f29e6600aa40b5d8f0b86ae2ffa0b95ce76a2321))
+
 ## [1.10.0](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.9.0...v1.10.0) (2026-08-21)
 
 
