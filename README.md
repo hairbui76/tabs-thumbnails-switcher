@@ -53,6 +53,17 @@ A Chrome extension that switches tabs using **most recently used (MRU)** order, 
 
 If a configured navigation key is rebound to **S**, that binding wins and the sort shortcut is skipped.
 
+### Switch on modifier release (Alt+Tab style)
+
+Off by default; turn it on in **Options → Overlay**. With it on, the switcher behaves like the Windows Alt+Tab dialog: **hold** the modifier that opened it, tap <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> to move, then **let the modifier go to switch**. Enter and Escape keep working.
+
+- The held modifier is ignored when matching bindings, so `Ctrl`+<kbd>Tab</kbd> still counts as plain "next" while you hold Ctrl.
+- **Shift is never the commit key.** It has to stay free to tell "previous" from "next", so holding <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Q</kbd> arms on Ctrl alone and releasing Shift does nothing.
+- It arms from whichever modifier is held when the switcher opens, or from the next key you press with one still down. That second path matters because Chrome swallows the keydown of its own command shortcuts, so the extension may never see the `Ctrl` of `Ctrl+Shift+Q` go down.
+- If you release the modifier before the overlay has finished injecting there is no keyup left to catch, so nothing is armed and the overlay simply waits for Enter or Escape.
+- `Alt+Tab` itself cannot be used as the trigger: Chrome's `commands` API does not accept `Tab` as a shortcut key, and Windows and most Linux desktops grab Alt+Tab before Chrome sees it. Alt also makes a poor hold key on Windows, where tapping it moves focus to Chrome's toolbar.
+- Like the rest of the overlay, this needs a content script, so it does not apply on `chrome://` pages, the Web Store, or the PDF viewer.
+
 ## Tab count
 
 The **toolbar icon carries a badge** with the number of tabs open in the focused window, repainted as tabs open, close, move between windows, or when you switch windows. Past 999 it reads `999+`. The icon's tooltip spells the same number out, next to the version.

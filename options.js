@@ -61,6 +61,7 @@
 
   var cb = document.getElementById("ttsDebug");
   var alsoAr = document.getElementById("alsoArrows");
+  var onRel = document.getElementById("commitOnRelease");
   var capMsg = document.getElementById("capMsg");
   var vNext = document.getElementById("vNext");
   var vPrev = document.getElementById("vPrev");
@@ -94,10 +95,12 @@
     vSw.textContent = format(state.switch);
     vCl.textContent = format(state.close);
     alsoAr.checked = state.alsoArrows !== false;
+    onRel.checked = state.commitOnRelease === true;
   }
 
   function saveOverlayKeys() {
     state.alsoArrows = alsoAr.checked;
+    state.commitOnRelease = onRel.checked;
     var p = {};
     p[sk] = {
       next: state.next,
@@ -105,6 +108,7 @@
       switch: state.switch,
       close: state.close,
       alsoArrows: state.alsoArrows,
+      commitOnRelease: state.commitOnRelease,
     };
     chrome.storage.local.set(p, function () {
       state = merge(p[sk]);
@@ -169,6 +173,9 @@
     startCapture("close");
   });
   alsoAr.addEventListener("change", function () {
+    saveOverlayKeys();
+  });
+  onRel.addEventListener("change", function () {
     saveOverlayKeys();
   });
 

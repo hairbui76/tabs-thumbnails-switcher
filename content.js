@@ -48,6 +48,82 @@
   } catch (e) {}
   pullOverlayKeys();
 
+  /**
+   * Which modifiers are down right now. Tracked continuously, before any overlay
+   * exists, because the switcher is built from a message rather than a key event —
+   * by then there is no event left to read `ctrlKey` off.
+   */
+  var heldMods = { ctrl: false, alt: false, shift: false, meta: false };
+  /** The modifier whose release commits the selection, or null when not armed. */
+  var armedMods = null;
+
+  function readMods(e) {
+    return { ctrl: !!e.ctrlKey, alt: !!e.altKey, shift: !!e.shiftKey, meta: !!e.metaKey };
+  }
+
+  function trackMods(e) {
+    heldMods = readMods(e);
+  }
+  window.addEventListener("keydown", trackMods, true);
+  window.addEventListener("keyup", trackMods, true);
+
+  /**
+   * Shift is deliberately never the commit key: it has to stay free to tell "previous"
+   * from "next", exactly as Shift+Tab reverses direction under Windows' Alt+Tab.
+   */
+  function armableFrom(mods) {
+    if (!mods.ctrl && !mods.alt && !mods.meta) return null;
+    return { ctrl: mods.ctrl, alt: mods.alt, shift: false, meta: mods.meta };
+  }
+
+  /**
+   * Arms on the first modifier we can see being held — at open time if we caught the
+   * keydown, otherwise off the next key the user presses with it still down. Chrome
+   * swallows the keydown of its own command shortcuts, so the second path is what
+   * makes this work when the switcher was opened from chrome://extensions/shortcuts.
+   */
+  function armFrom(mods) {
+    if (!overlayKeyState.commitOnRelease || armedMods) return;
+    var arm = armableFrom(mods);
+    if (!arm) return;
+    armedMods = arm;
+    LOG("release-to-switch armed on", arm);
+  }
+
+  /** True when a modifier we armed on has just gone up. */
+  function armedModifierReleased(e) {
+    if (!armedMods) return false;
+    var now = readMods(e);
+    return (
+      (armedMods.ctrl && !now.ctrl) ||
+      (armedMods.alt && !now.alt) ||
+      (armedMods.meta && !now.meta)
+    );
+  }
+
+  /**
+   * Key matching that looks past whatever modifier is armed. The user is holding it
+   * down on purpose, so Ctrl+Tab has to still register as the plain "next" binding.
+   */
+  function matchKey(e, spec) {
+    if (!armedMods) return OK.match(e, spec);
+    if (e.key !== spec.k) return false;
+    if (e.shiftKey !== !!spec.shift) return false;
+    if (!armedMods.ctrl && e.ctrlKey !== !!spec.ctrl) return false;
+    if (!armedMods.alt && e.altKey !== !!spec.alt) return false;
+    if (!armedMods.meta && e.metaKey !== !!spec.meta) return false;
+    return true;
+  }
+
+  /** A bare key press — no modifiers beyond the armed one, which we ignore. */
+  function isBareKey(e, keys) {
+    if (keys.indexOf(e.key) === -1 || e.shiftKey) return false;
+    if (e.ctrlKey && !(armedMods && armedMods.ctrl)) return false;
+    if (e.altKey && !(armedMods && armedMods.alt)) return false;
+    if (e.metaKey && !(armedMods && armedMods.meta)) return false;
+    return true;
+  }
+
   function getDomain(url) {
     try {
       return new URL(url).hostname;
@@ -217,6 +293,8 @@
     currentTabId = activeTabId;
     tabCounts = counts || null;
     selectedIndex = tabs.length > 1 ? 1 : 0;
+    armedMods = null;
+    armFrom(heldMods);
 
     const overlay = document.createElement("div");
     overlay.id = OVERLAY_ID;
@@ -324,6 +402,7 @@
     });
 
     document.addEventListener("keydown", handleKeyDown, true);
+    document.addEventListener("keyup", handleKeyUp, true);
     LOG("overlay shown, selected index:", selectedIndex);
   }
 
@@ -348,6 +427,7 @@
 
     const list = overlay.querySelector(".tts-list");
     const k = overlayKeyState;
+    armFrom(readMods(e));
 
     function goPrev() {
       e.preventDefault();
@@ -364,7 +444,7 @@
       updateSelection(list);
     }
 
-    if (OK.match(e, k.close)) {
+    if (matchKey(e, k.close)) {
       if (e.repeat) return;
       e.preventDefault();
       e.stopPropagation();
@@ -372,7 +452,7 @@
       removeOverlay();
       return;
     }
-    if (OK.match(e, k.switch)) {
+    if (matchKey(e, k.switch)) {
       if (e.repeat) return;
       e.preventDefault();
       e.stopPropagation();
@@ -380,31 +460,54 @@
       if (tabList[selectedIndex]) switchToTab(tabList[selectedIndex].id);
       return;
     }
-    if (OK.match(e, k.prev)) {
+    if (matchKey(e, k.prev)) {
       goPrev();
       return;
     }
-    if (OK.match(e, k.next)) {
+    if (matchKey(e, k.next)) {
       goNext();
       return;
     }
-    if (k.alsoArrows && e.key === "ArrowDown" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    if (k.alsoArrows && isBareKey(e, ["ArrowDown"])) {
       goNext();
       return;
     }
-    if (k.alsoArrows && e.key === "ArrowUp" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    if (k.alsoArrows && isBareKey(e, ["ArrowUp"])) {
       goPrev();
       return;
     }
     // Reached only when the configured keys above did not claim the event, so a user
     // who rebinds navigation to S keeps that binding.
-    if ((e.key === "s" || e.key === "S") && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+    if (isBareKey(e, ["s", "S"])) {
       if (e.repeat) return;
       e.preventDefault();
       e.stopPropagation();
       requestSort();
       return;
     }
+  }
+
+  /**
+   * Windows' Alt+Tab commits when you let the modifier go; this does the same. Only
+   * ever reached while the overlay is open, and only arms/commits when the option is
+   * on, so with it off this is two boolean reads per keyup.
+   */
+  function handleKeyUp(e) {
+    if (!document.getElementById(OVERLAY_ID)) return;
+    if (!overlayKeyState.commitOnRelease) return;
+
+    if (armedModifierReleased(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const tab = tabList[selectedIndex];
+      LOG("armed modifier released, switching to", tab && tab.id);
+      if (tab) switchToTab(tab.id);
+      else removeOverlay();
+      return;
+    }
+    // Releasing a non-modifier (the Q of Ctrl+Shift+Q, say) still tells us what is
+    // being held, which is the only signal we get when Chrome ate the keydown.
+    armFrom(readMods(e));
   }
 
   function switchToTab(tabId) {
@@ -415,6 +518,8 @@
 
   function removeOverlay() {
     document.removeEventListener("keydown", handleKeyDown, true);
+    document.removeEventListener("keyup", handleKeyUp, true);
+    armedMods = null;
     const overlay = document.getElementById(OVERLAY_ID);
     if (overlay) {
       overlay.classList.remove("tts-visible");

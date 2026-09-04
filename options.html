@@ -208,6 +208,11 @@
         <input type="checkbox" id="alsoArrows" />
         <span>Also use Arrow Up / Arrow Down to navigate (in addition to the keys above)</span>
       </label>
+      <label>
+        <input type="checkbox" id="commitOnRelease" />
+        <span>Switch on modifier release (Alt+Tab style)</span>
+      </label>
+      <p>Hold the modifier that opened the switcher &mdash; <kbd>Ctrl</kbd> for the default <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Q</kbd> &mdash; tap <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> to move, then <strong>let the modifier go to switch</strong>. <kbd>Enter</kbd> and <kbd>Escape</kbd> keep working. <kbd>Shift</kbd> is never the commit key, so it stays free to reverse direction. Off by default: with it on, opening the switcher and letting go to reach for the mouse switches tabs.</p>
 
       <h2>Tab count</h2>
       <p>The toolbar icon shows a <strong>badge with the number of tabs open in the focused window</strong> (<code>999+</code> past 999), and its tooltip spells the number out. The switcher header repeats it as a pill next to the title, plus a cross-window total when you have more than one window open. Only normal browser windows count &mdash; not popups, app windows or devtools.</p>

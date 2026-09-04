@@ -10,6 +10,10 @@
     switch: { k: "Enter", shift: false, ctrl: false, alt: false, meta: false },
     close: { k: "Escape", shift: false, ctrl: false, alt: false, meta: false },
     alsoArrows: true,
+    // Alt+Tab semantics: letting go of the held modifier commits the selection.
+    // Off by default — it would otherwise switch tabs on people who open the
+    // switcher and then let go to reach for the mouse.
+    commitOnRelease: false,
   };
 
   g.TTS_mergeOverlayKeys = function (stored) {
@@ -23,6 +27,7 @@
       switch: g.TTS_mergeKeySpec(b.switch, stored.switch),
       close: g.TTS_mergeKeySpec(b.close, stored.close),
       alsoArrows: stored.alsoArrows !== false,
+      commitOnRelease: stored.commitOnRelease === true,
     };
   };
 
@@ -71,6 +76,9 @@
       '<span class="tts-key">' + esc(a(keys.close)) + "</span> close" +
       (keys.alsoArrows
         ? ' <span class="tts-hint-extra" style="opacity:0.65">· Arrows: also navigate</span>'
+        : "") +
+      (keys.commitOnRelease
+        ? ' <span class="tts-hint-extra" style="opacity:0.65">· release the held key to switch</span>'
         : "")
     );
   };
