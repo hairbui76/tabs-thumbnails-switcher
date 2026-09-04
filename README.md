@@ -61,7 +61,9 @@ To cycle while holding, either **tap the open shortcut again** — with `Ctrl+Sh
 
 **<kbd>Tab</kbd> pressed as a plain keystroke cannot cycle, and cannot be made to.** Chrome reserves `Ctrl+Tab` and `Ctrl+Shift+Tab` for its own tab switching and [never dispatches them to a page](https://lists.w3.org/Archives/Public/public-webapps-github/2016Jan/0255.html) — deliberately, so that a page cannot trap a keyboard-only user by swallowing every key. Firefox delivers them and ignores `preventDefault`; Chrome, Safari and Edge deliver nothing. The way around it is to bind `Ctrl+Shift+Tab` as a *command*, which arrives through the extension API rather than the page.
 
-**Where the release gesture gets armed.** The extension asks Chrome what the open shortcut is currently bound to (`chrome.commands.getAll`) and arms on that chord's modifiers. It cannot watch the keyboard for this: Chrome consumes the keydown of its own command chords, so with `Ctrl+Shift+Q` as the cycle key the page never sees a single keydown with Ctrl held, and if it also missed the bare Ctrl keydown — focus in the omnibox, say — it would have no idea anything was being held. Observed key state stays as a fallback for the in-page paths.
+**What triggers the commit.** Any of Ctrl, Alt or Meta going up, once the switcher has been opened from the keyboard. The extension also tries to work out the exact chord — it asks Chrome what the shortcut is bound to (`chrome.commands.getAll`) and watches observed key state — but that is a refinement, not a requirement. It cannot be a requirement: Chrome consumes the keydown of its own command chords, so with `Ctrl+Shift+Q` as the cycle key the page never sees one keydown with Ctrl held, and if it also missed the bare Ctrl keydown — focus in the omnibox, say — it has no idea anything is held. Gating the commit on identifying the chord meant that whenever identification failed, releasing did nothing at all.
+
+Opening the switcher by **clicking the toolbar icon** does not arm anything, so a stray Ctrl press cannot switch tabs behind your back.
 
 The rest of the details:
 
@@ -69,7 +71,7 @@ The rest of the details:
 - **Shift is never the commit key.** It has to stay free to tell "previous" from "next", so `Ctrl+Shift+Q` arms on Ctrl alone and releasing Shift does nothing. For the same reason the arrows accept Shift while armed: the chord holds it down anyway, and up/down need no Shift to tell them apart.
 - The held modifier is masked out when matching bindings, so a binding of plain <kbd>J</kbd> still fires while you hold Ctrl.
 - The overlay takes DOM focus when it opens, so the keyup that commits lands on the document rather than in an input or iframe that held focus before.
-- Detecting the release still needs the page to receive the keyup, so this does not work on `chrome://` pages, the Web Store, or the PDF viewer, where content scripts never run.
+- Detecting the release needs the page to receive the keyup, so it does not work on `chrome://` pages, the Web Store, or the PDF viewer, where content scripts never run — nor if the page has no keyboard focus at all. Turn on the debug console in Options and watch for `keyup` lines in the page devtools: no lines at all means the page is not receiving key events, which is the one case nothing here can fix.
 - `Alt+Tab` cannot be the trigger: the `commands` API does not accept `Tab` as a shortcut key through the normal UI, and Windows and most Linux desktops grab Alt+Tab before Chrome sees it. Alt is a poor hold key on Windows anyway, where tapping it moves focus to Chrome's toolbar.
 
 ## Tab count

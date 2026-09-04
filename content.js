@@ -54,8 +54,15 @@
    * by then there is no event left to read `ctrlKey` off.
    */
   var heldMods = { ctrl: false, alt: false, shift: false, meta: false };
-  /** The modifier whose release commits the selection, or null when not armed. */
+  /** The modifier whose release commits the selection, or null when not identified. */
   var armedMods = null;
+  /**
+   * Whether the switcher was opened from the keyboard, so the user is presumably still
+   * holding something. This, not armedMods, is what gates the commit: identifying the
+   * exact chord is best-effort, and gating on it meant that whenever identification
+   * failed the gesture silently did nothing at all.
+   */
+  var openedByKey = false;
 
   function readMods(e) {
     return { ctrl: !!e.ctrlKey, alt: !!e.altKey, shift: !!e.shiftKey, meta: !!e.metaKey };
@@ -91,7 +98,7 @@
     LOG("release-to-switch armed on", arm);
   }
 
-  /** True when a modifier we armed on has just gone up. */
+  /** True when a modifier we identified has just gone up. */
   function armedModifierReleased(e) {
     if (!armedMods) return false;
     var now = readMods(e);
@@ -100,6 +107,14 @@
       (armedMods.alt && !now.alt) ||
       (armedMods.meta && !now.meta)
     );
+  }
+
+  /**
+   * Any modifier going up, whichever it is. Shift is left out on purpose: it stays
+   * free to reverse direction, and the trigger chords hold it down anyway.
+   */
+  function isCommitModifier(key) {
+    return key === "Control" || key === "Alt" || key === "Meta" || key === "OS";
   }
 
   /**
@@ -279,11 +294,12 @@
   }
 
   /** Refresh an already-open overlay in place (used after a sort) — no rebuild flash. */
-  function updateTabs(overlay, tabs, activeTabId, counts, armMods) {
+  function updateTabs(overlay, tabs, activeTabId, counts, armMods, byKey) {
     const keepId = tabList[selectedIndex] && tabList[selectedIndex].id;
     tabList = tabs;
     currentTabId = activeTabId;
     tabCounts = counts || tabCounts;
+    if (byKey) openedByKey = true;
     armFrom(armMods);
     const i = tabList.findIndex((t) => t.id === keepId);
     selectedIndex = i >= 0 ? i : 0;
@@ -312,7 +328,7 @@
     return btn;
   }
 
-  function buildOverlay(tabs, activeTabId, counts, armMods) {
+  function buildOverlay(tabs, activeTabId, counts, armMods, byKey) {
     LOG("building overlay with", tabs.length, "tabs");
     removeOverlay();
     tabList = tabs;
@@ -320,6 +336,7 @@
     tabCounts = counts || null;
     selectedIndex = tabs.length > 1 ? 1 : 0;
     armedMods = null;
+    openedByKey = !!byKey;
     armFrom(armMods);
 
     const overlay = document.createElement("div");
@@ -531,18 +548,24 @@
   function handleKeyUp(e) {
     if (!document.getElementById(OVERLAY_ID)) return;
     if (!overlayKeyState.commitOnRelease) return;
+    // Logged for every keyup so an empty log distinguishes "we decided not to commit"
+    // from "this page is not receiving key events at all".
+    LOG("keyup", e.key, "armed:", armedMods, "openedByKey:", openedByKey);
 
-    if (armedModifierReleased(e)) {
+    // Either the chord we identified let go, or — when identifying it failed, which
+    // happens whenever Chrome consumed the whole chord — any modifier let go after a
+    // keyboard open.
+    if (armedModifierReleased(e) || (openedByKey && isCommitModifier(e.key))) {
       e.preventDefault();
       e.stopPropagation();
       const tab = tabList[selectedIndex];
-      LOG("armed modifier released, switching to", tab && tab.id);
+      LOG("modifier released, switching to", tab && tab.id);
       if (tab) switchToTab(tab.id);
       else removeOverlay();
       return;
     }
     // Releasing a non-modifier (the Q of Ctrl+Shift+Q, say) still tells us what is
-    // being held, which is the only signal we get when Chrome ate the keydown.
+    // being held, which is another chance to identify the chord.
     armFrom(readMods(e));
   }
 
@@ -570,6 +593,7 @@
     selectedIndex = 0;
     currentTabId = null;
     tabCounts = null;
+    openedByKey = false;
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -582,7 +606,8 @@
       const overlay = document.getElementById(OVERLAY_ID);
       if (overlay) {
         // The chord that got us here is still held, so this is also our chance to
-        // arm if the overlay went up some other way (a toolbar click, say).
+        // identify it if the overlay went up some other way (a toolbar click, say).
+        if (message.openedByKey) openedByKey = true;
         armFrom(message.armMods);
         advanceSelection(overlay, message.delta || 1);
       } else if (window.top === window) {
@@ -596,8 +621,11 @@
     if (message.action === "show-switcher") {
       LOG("show-switcher received with", message.tabs.length, "tabs");
       const open = document.getElementById(OVERLAY_ID);
-      if (open) updateTabs(open, message.tabs, message.activeTabId, message.counts, message.armMods);
-      else buildOverlay(message.tabs, message.activeTabId, message.counts, message.armMods);
+      if (open) {
+        updateTabs(open, message.tabs, message.activeTabId, message.counts, message.armMods, message.openedByKey);
+      } else {
+        buildOverlay(message.tabs, message.activeTabId, message.counts, message.armMods, message.openedByKey);
+      }
     }
   });
 })();

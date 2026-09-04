@@ -461,6 +461,7 @@ async function showSwitcher(opts) {
       activeTabId: activeTab.id,
       counts,
       armMods: (opts && opts.armMods) || null,
+      openedByKey: !!(opts && opts.openedByKey),
     });
     LOG("show-switcher message sent successfully");
   } catch (e) {
@@ -563,6 +564,7 @@ async function advanceOrOpen() {
         action: "advance-selection",
         delta: 1,
         armMods,
+        openedByKey: true,
       });
       LOG("advanced selection in tab", activeTab.id);
       return;
@@ -571,7 +573,7 @@ async function advanceOrOpen() {
       overlayTabId = null;
     }
   }
-  await showSwitcher({ armMods });
+  await showSwitcher({ armMods, openedByKey: true });
 }
 
 chrome.runtime.onMessage.addListener((message, sender) => {
@@ -586,7 +588,9 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     return;
   }
   if (message.action === "gesture-open-switcher") {
-    void triggerMods("open-tab-switcher").then((armMods) => showSwitcher({ armMods }));
+    void triggerMods("open-tab-switcher").then((armMods) =>
+      showSwitcher({ armMods, openedByKey: true })
+    );
     return;
   }
   if (message.action === "quick-previous-mru") {

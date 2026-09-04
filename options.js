@@ -59,34 +59,46 @@
   }
 
   function fillBindSnippets() {
-    var id = chrome.runtime.id;
     var both = document.getElementById("bothSnippet");
-    if (both) {
-      both.textContent =
-        updateCommand(id, "quick-previous-mru", "Ctrl+Tab") + NL + NL +
-        updateCommand(id, "open-tab-switcher", "Ctrl+Shift+Tab");
-    }
-    var one = document.getElementById("oneSnippet");
-    if (one) {
-      one.textContent = updateCommand(id, "open-tab-switcher", "Ctrl+Shift+Tab");
-    }
+    if (!both) return;
+    var id = chrome.runtime.id;
+    both.textContent =
+      updateCommand(id, "quick-previous-mru", "Ctrl+Tab") + NL + NL +
+      updateCommand(id, "open-tab-switcher", "Ctrl+Shift+Tab");
   }
 
-  /** Shows what each command is bound to right now, so the snippets can be checked. */
-  function fillCurrentBindings() {
-    var out = document.getElementById("currentBindings");
-    if (!out || !chrome.commands || !chrome.commands.getAll) return;
-    chrome.commands.getAll(function (cmds) {
-      var named = (cmds || []).filter(function (c) {
-        return c.name;
+  /** Lists each command id with its description and current binding. */
+  function fillCommandList() {
+    var dl = document.getElementById("commandList");
+    if (!dl) return;
+    var manifest = chrome.runtime.getManifest();
+    var declared = (manifest && manifest.commands) || {};
+    var names = Object.keys(declared);
+
+    var render = function (shortcuts) {
+      dl.textContent = "";
+      names.forEach(function (name) {
+        var dt = document.createElement("dt");
+        dt.textContent = name;
+        var dd = document.createElement("dd");
+        var desc = declared[name].description || "";
+        var bound = shortcuts[name];
+        dd.textContent = desc + (desc ? " \u2014 " : "") + (bound ? bound : "not bound");
+        dl.appendChild(dt);
+        dl.appendChild(dd);
       });
-      out.textContent = named.length
-        ? named
-            .map(function (c) {
-              return c.name + " = " + (c.shortcut || "(unset)");
-            })
-            .join("   ")
-        : "(none)";
+    };
+
+    if (!chrome.commands || !chrome.commands.getAll) {
+      render({});
+      return;
+    }
+    chrome.commands.getAll(function (cmds) {
+      var shortcuts = {};
+      (cmds || []).forEach(function (c) {
+        if (c.name) shortcuts[c.name] = c.shortcut || "";
+      });
+      render(shortcuts);
     });
   }
 
@@ -217,7 +229,7 @@
   readAll();
   fillAbout();
   fillBindSnippets();
-  fillCurrentBindings();
+  fillCommandList();
 
   chrome.storage.onChanged.addListener(function (changes, area) {
     if (area !== "local") return;
