@@ -8,6 +8,9 @@
    */
   var TTS_RELEASE_DATE_ISO = "2026-09-03";
 
+  /** Newline for the generated console snippets, spelled out to keep them escape-free. */
+  var NL = String.fromCharCode(10);
+
   var g = self;
   var sk = g.TTS_STORAGE_KEY_OVERLAY_KEYS;
   var merge = g.TTS_mergeOverlayKeys;
@@ -45,18 +48,46 @@
     if (el("aboutDesc")) el("aboutDesc").textContent = m.description || "—";
   }
 
-  function fillCtrlTabSnippet() {
-    var pre = document.getElementById("ctrlTabSnippet");
-    if (!pre) return;
+  function updateCommand(id, commandName, keybinding) {
+    return (
+      "await chrome.developerPrivate.updateExtensionCommand({" + NL +
+      '  extensionId: "' + id + '",' + NL +
+      '  commandName: "' + commandName + '",' + NL +
+      '  keybinding: "' + keybinding + '"' + NL +
+      "});"
+    );
+  }
+
+  function fillBindSnippets() {
     var id = chrome.runtime.id;
-    pre.textContent =
-      "await chrome.developerPrivate.updateExtensionCommand({\n" +
-      "  extensionId: \"" +
-      id +
-      "\",\n" +
-      "  commandName: \"quick-previous-mru\",\n" +
-      "  keybinding: \"Ctrl+Tab\"\n" +
-      "});";
+    var both = document.getElementById("bothSnippet");
+    if (both) {
+      both.textContent =
+        updateCommand(id, "quick-previous-mru", "Ctrl+Tab") + NL + NL +
+        updateCommand(id, "open-tab-switcher", "Ctrl+Shift+Tab");
+    }
+    var one = document.getElementById("oneSnippet");
+    if (one) {
+      one.textContent = updateCommand(id, "open-tab-switcher", "Ctrl+Shift+Tab");
+    }
+  }
+
+  /** Shows what each command is bound to right now, so the snippets can be checked. */
+  function fillCurrentBindings() {
+    var out = document.getElementById("currentBindings");
+    if (!out || !chrome.commands || !chrome.commands.getAll) return;
+    chrome.commands.getAll(function (cmds) {
+      var named = (cmds || []).filter(function (c) {
+        return c.name;
+      });
+      out.textContent = named.length
+        ? named
+            .map(function (c) {
+              return c.name + " = " + (c.shortcut || "(unset)");
+            })
+            .join("   ")
+        : "(none)";
+    });
   }
 
   var cb = document.getElementById("ttsDebug");
@@ -185,7 +216,8 @@
 
   readAll();
   fillAbout();
-  fillCtrlTabSnippet();
+  fillBindSnippets();
+  fillCurrentBindings();
 
   chrome.storage.onChanged.addListener(function (changes, area) {
     if (area !== "local") return;

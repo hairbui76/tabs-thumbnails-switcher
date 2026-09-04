@@ -25,7 +25,7 @@ A Chrome extension that switches tabs using **most recently used (MRU)** order, 
 - Right-click the extension icon → **Options**, or from `chrome://extensions` open **Extension options** for this extension.
 - **Enable debug console (verbose logs)** — when off, `[TTS …]` logs are suppressed in the service worker and in page devtools. Default is off.
 - **Overlay (when the tab switcher is open)** — set **Next / Previous / Switch to selected / Close** by clicking **Change…** and pressing a key (modifiers like Shift / Ctrl are captured). **Escape** cancels capture. The hint bar in the switcher uses these labels. You can also enable **Arrow Up / Arrow Down** for navigation in addition to your custom keys (default: on, same as the old behavior).
-- **Quick switch: Ctrl+Tab (advanced)** — step-by-step instructions and a console snippet with your **extension id** already filled in (same idea as in [Can I use Ctrl+Tab for quick switch?](#can-i-use-ctrltab-for-quick-switch)).
+- **Quick switch: Ctrl+Tab (advanced)** — step-by-step instructions and a console snippet with your **extension id** already filled in (same idea as in [Binding Tab shortcuts](#binding-tab-shortcuts)).
 
 ## Keyboard shortcuts (`chrome://extensions/shortcuts`)
 
@@ -35,7 +35,7 @@ A Chrome extension that switches tabs using **most recently used (MRU)** order, 
    - **Open tab switcher (thumbnail menu)** — default **Ctrl+Shift+Q** (same chord as the in-page long-press; see `key-gesture.js`)
 3. The manifest defines these in [`manifest.json`](manifest.json) under `commands`.
 
-**Ctrl+Tab:** The normal shortcuts UI usually will not assign **Ctrl+Tab** to an extension (Chrome reserves it). See [Can I use Ctrl+Tab for quick switch?](#can-i-use-ctrltab-for-quick-switch) below for an **advanced** console workaround on `chrome://extensions/shortcuts`, or use **OS-level remapping** to send your chosen shortcut.
+**Ctrl+Tab:** The normal shortcuts UI usually will not assign **Ctrl+Tab** to an extension (Chrome reserves it). See [Binding Tab shortcuts](#binding-tab-shortcuts) below for the console workaround, or use **OS-level remapping** to send your chosen shortcut.
 
 ### When the overlay is open
 
@@ -57,22 +57,20 @@ If a configured navigation key is rebound to **S**, that binding wins and the so
 
 Off by default; turn it on in **Options → Overlay**. With it on, the switcher works like the Windows Alt+Tab dialog: **keep holding** the shortcut that opened it, cycle, then **let go of Ctrl to switch**. Enter and Escape keep working.
 
-To cycle while holding, either:
+To cycle while holding, either **tap the open shortcut again** — with `Ctrl+Shift+Q`, keep Ctrl+Shift down and tap <kbd>Q</kbd> — or press <kbd>&darr;</kbd> / <kbd>&uarr;</kbd>. For the real thing, with <kbd>Tab</kbd> as the cycle key, see [Binding Tab shortcuts](#binding-tab-shortcuts).
 
-- **tap the open shortcut again** — with `Ctrl+Shift+Q`, keep Ctrl+Shift down and tap <kbd>Q</kbd>; or
-- press <kbd>&darr;</kbd> / <kbd>&uarr;</kbd>.
+**<kbd>Tab</kbd> pressed as a plain keystroke cannot cycle, and cannot be made to.** Chrome reserves `Ctrl+Tab` and `Ctrl+Shift+Tab` for its own tab switching and [never dispatches them to a page](https://lists.w3.org/Archives/Public/public-webapps-github/2016Jan/0255.html) — deliberately, so that a page cannot trap a keyboard-only user by swallowing every key. Firefox delivers them and ignores `preventDefault`; Chrome, Safari and Edge deliver nothing. The way around it is to bind `Ctrl+Shift+Tab` as a *command*, which arrives through the extension API rather than the page.
 
-**<kbd>Tab</kbd> does not work as the cycle key**, and cannot be made to. Chrome reserves `Ctrl+Tab` and `Ctrl+Shift+Tab` for its own tab switching and [never dispatches them to a page](https://lists.w3.org/Archives/Public/public-webapps-github/2016Jan/0255.html) — deliberately, so that a page cannot trap a keyboard-only user by swallowing every key. Firefox does deliver them and ignores `preventDefault`; Chrome, Safari and Edge do not deliver them at all. So the switcher never sees `Ctrl+Tab`, which is also why tapping the open shortcut is routed through the `commands` API instead of the page.
+**Where the release gesture gets armed.** The extension asks Chrome what the open shortcut is currently bound to (`chrome.commands.getAll`) and arms on that chord's modifiers. It cannot watch the keyboard for this: Chrome consumes the keydown of its own command chords, so with `Ctrl+Shift+Q` as the cycle key the page never sees a single keydown with Ctrl held, and if it also missed the bare Ctrl keydown — focus in the omnibox, say — it would have no idea anything was being held. Observed key state stays as a fallback for the in-page paths.
 
 The rest of the details:
 
-- Cycling by re-tapping the shortcut only moves **forwards** — the chord already contains Shift, so there is no reversed variant of it. Use <kbd>&uarr;</kbd> to go back.
-- **Shift is never the commit key.** It has to stay free to tell "previous" from "next", so holding `Ctrl+Shift+Q` arms on Ctrl alone and releasing Shift does nothing. For the same reason the arrows accept Shift while armed: the chord holds it down anyway, and up/down need no Shift to tell them apart.
+- Cycling by re-tapping the shortcut only moves **forwards**; the chord already contains Shift, so there is no reversed variant of it. Use <kbd>&uarr;</kbd> to go back.
+- **Shift is never the commit key.** It has to stay free to tell "previous" from "next", so `Ctrl+Shift+Q` arms on Ctrl alone and releasing Shift does nothing. For the same reason the arrows accept Shift while armed: the chord holds it down anyway, and up/down need no Shift to tell them apart.
 - The held modifier is masked out when matching bindings, so a binding of plain <kbd>J</kbd> still fires while you hold Ctrl.
-- It arms from whichever modifier is held when the switcher opens, or from the next key you press with one still down. That second path matters because Chrome swallows the keydown of its own command shortcuts.
-- If you release the modifier before the overlay has finished injecting there is no keyup left to catch, so nothing is armed and the overlay simply waits for Enter or Escape.
-- `Alt+Tab` cannot be the trigger either: Chrome's `commands` API does not accept `Tab` as a shortcut key at all, and Windows and most Linux desktops grab Alt+Tab before Chrome sees it. Alt is also a poor hold key on Windows, where tapping it moves focus to Chrome's toolbar.
-- Like the rest of the overlay, this needs a content script, so it does not apply on `chrome://` pages, the Web Store, or the PDF viewer.
+- The overlay takes DOM focus when it opens, so the keyup that commits lands on the document rather than in an input or iframe that held focus before.
+- Detecting the release still needs the page to receive the keyup, so this does not work on `chrome://` pages, the Web Store, or the PDF viewer, where content scripts never run.
+- `Alt+Tab` cannot be the trigger: the `commands` API does not accept `Tab` as a shortcut key through the normal UI, and Windows and most Linux desktops grab Alt+Tab before Chrome sees it. Alt is a poor hold key on Windows anyway, where tapping it moves focus to Chrome's toolbar.
 
 ## Tab count
 
@@ -104,27 +102,39 @@ Tabs never leave the run they belong to, so nothing gets scrambled:
 
 The recent head is picked once per window, then each run leads with whichever of those tabs it happens to contain — so you get one top 10 overall, not a top 10 per group. Tabs never activated in this session have no visit time, are not eligible for the head, and land at the end of their site block.
 
-## Can I use Ctrl+Tab for quick switch?
+## Binding Tab shortcuts
 
-**Usually not through the pencil UI** — Chrome reserves **Ctrl+Tab** for built‑in tab switching, so the shortcuts page often will not let you pick it for **Quick switch: previous tab (MRU)**.
+Chrome's shortcut editor will not assign anything containing <kbd>Tab</kbd> to an extension: the `commands` API does not accept `Tab` as a shortcut key at all (the allowed set is A–Z, 0–9, Comma, Period, Home, End, PageUp, PageDown, Space, Insert, Delete, the arrow keys and media keys). Chrome's **internal** API will, from the shortcuts page.
 
-- **Default:** set **Quick switch** to any free combination in `chrome://extensions/shortcuts` (e.g. **Ctrl+Shift+E**).
+The **Options** page generates these snippets with your extension id already filled in, and shows what each command is bound to right now. To run one by hand:
 
-If you specifically want **Ctrl+Tab**:
+1. Open `chrome://extensions/shortcuts`, with **Developer mode** on (toggle on `chrome://extensions`).
+2. Open **Developer Tools** for that tab (right-click → Inspect, or **Ctrl+Shift+J**).
+3. Paste into the **Console** and press Enter, replacing `YOUR_EXTENSION_ID` with the id shown under this extension on `chrome://extensions`:
 
-1. **Advanced (Chrome only, internal API)** — On `chrome://extensions/shortcuts`, with **Developer mode** enabled (toggle on `chrome://extensions`), open **Developer Tools** for that tab (e.g. right‑click → Inspect, or **Ctrl+Shift+J**). In the **Console**, paste (replace `YOUR_EXTENSION_ID` with the id shown under this extension on `chrome://extensions`; the **Options** page of this extension can show a ready‑to‑paste snippet with your id filled in):
+```js
+// Ctrl+Tab jumps straight to the previous tab.
+await chrome.developerPrivate.updateExtensionCommand({
+  extensionId: "YOUR_EXTENSION_ID",
+  commandName: "quick-previous-mru",
+  keybinding: "Ctrl+Tab"
+});
 
-   ```js
-   await chrome.developerPrivate.updateExtensionCommand({
-     extensionId: "YOUR_EXTENSION_ID",
-     commandName: "quick-previous-mru",
-     keybinding: "Ctrl+Tab"
-   });
-   ```
+// Ctrl+Shift+Tab opens the switcher, and taps of Tab then walk it.
+await chrome.developerPrivate.updateExtensionCommand({
+  extensionId: "YOUR_EXTENSION_ID",
+  commandName: "open-tab-switcher",
+  keybinding: "Ctrl+Shift+Tab"
+});
+```
 
-   This calls `chrome.developerPrivate`, which exists on that internal page when Developer mode is on. It is **not** a stable public API—Chrome may change or remove it. Only run snippets you trust.
+That pair is the arrangement worth having. With [switch on modifier release](#switch-on-modifier-release-alttab-style) turned on it reproduces Alt+Tab exactly: hold <kbd>Ctrl</kbd>+<kbd>Shift</kbd>, tap <kbd>Tab</kbd> to walk the list, let <kbd>Ctrl</kbd> go to jump. Cycling with <kbd>Tab</kbd> works **only** when bound this way, for the reason above — as a plain keystroke it never reaches the extension.
 
-2. **OS remap** — Map **Ctrl+Tab** (while Chrome is focused) to whatever key you assigned for quick switch in `chrome://extensions/shortcuts` (e.g. **Ctrl+Shift+E**) using an **OS tool** (e.g. Windows **AutoHotkey**). Same idea if you want **plain Ctrl+E** for quick switch: remap at the OS to the extension’s assigned shortcut.
+The command names are `quick-previous-mru` (no menu) and `open-tab-switcher` (thumbnail menu, and the cycle key while the menu is up). Change `keybinding` to whatever you like.
+
+This calls `chrome.developerPrivate`, which exists on that internal page when Developer mode is on. It is **not** a stable public API — Chrome may change or remove it. Only run snippets you trust. To undo, rebind to something ordinary or press **Reset** next to the shortcut on `chrome://extensions/shortcuts`.
+
+Failing all that, **OS-level remapping** (Windows AutoHotkey and friends) can map any chord onto whatever you assigned in `chrome://extensions/shortcuts`.
 
 ## How it works
 

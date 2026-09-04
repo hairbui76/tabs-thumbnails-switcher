@@ -460,6 +460,7 @@ async function showSwitcher(opts) {
       tabs: sortedTabs,
       activeTabId: activeTab.id,
       counts,
+      armMods: (opts && opts.armMods) || null,
     });
     LOG("show-switcher message sent successfully");
   } catch (e) {
@@ -513,6 +514,40 @@ chrome.commands.onCommand.addListener((command) => {
 });
 
 /**
+ * The modifiers of whatever shortcut is bound to a command right now, read from
+ * Chrome rather than guessed from the keyboard.
+ *
+ * This is the only reliable way to arm "switch on release". The page cannot be asked:
+ * Chrome consumes the keydown of its own command chords, so with Ctrl+Shift+Q as the
+ * cycle key the page never sees a single keydown with Ctrl held, and if it also missed
+ * the bare Ctrl keydown (focus in the browser UI, say) it has no idea anything is being
+ * held. Asking Chrome what the chord is sidesteps all of that.
+ */
+async function triggerMods(commandName) {
+  try {
+    const all = await chrome.commands.getAll();
+    const found = all.find((c) => c.name === commandName);
+    const shortcut = (found && found.shortcut) || "";
+    if (!shortcut) return null;
+    const parts = shortcut.split("+").map((x) => x.trim());
+    const named = (name) => parts.indexOf(name) !== -1;
+    const glyph = (ch) => shortcut.indexOf(ch) !== -1;
+    const mods = {
+      // macOS reports Command as "Command" and the real control key as "MacCtrl".
+      ctrl: named("Ctrl") || named("MacCtrl") || glyph("\u2303"),
+      alt: named("Alt") || named("Option") || glyph("\u2325"),
+      shift: named("Shift") || glyph("\u21e7"),
+      meta: named("Command") || named("Search") || glyph("\u2318"),
+    };
+    LOG("trigger mods for", commandName, "from", shortcut, "->", mods);
+    return mods;
+  } catch (e) {
+    LOG("triggerMods failed:", e && e.message);
+    return null;
+  }
+}
+
+/**
  * Chrome reserves Ctrl+Tab for its own tab switching and never dispatches it to a
  * page, so it cannot be the cycle key while Ctrl is held. Tapping the open shortcut
  * again is the cycle instead — Alt+Tab's own gesture, just with Q for Tab — which
@@ -520,10 +555,15 @@ chrome.commands.onCommand.addListener((command) => {
  */
 async function advanceOrOpen() {
   await ready();
+  const armMods = await triggerMods("open-tab-switcher");
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (activeTab && overlayTabId === activeTab.id) {
     try {
-      await chrome.tabs.sendMessage(activeTab.id, { action: "advance-selection", delta: 1 });
+      await chrome.tabs.sendMessage(activeTab.id, {
+        action: "advance-selection",
+        delta: 1,
+        armMods,
+      });
       LOG("advanced selection in tab", activeTab.id);
       return;
     } catch (e) {
@@ -531,7 +571,7 @@ async function advanceOrOpen() {
       overlayTabId = null;
     }
   }
-  await showSwitcher();
+  await showSwitcher({ armMods });
 }
 
 chrome.runtime.onMessage.addListener((message, sender) => {
@@ -546,7 +586,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     return;
   }
   if (message.action === "gesture-open-switcher") {
-    void showSwitcher();
+    void triggerMods("open-tab-switcher").then((armMods) => showSwitcher({ armMods }));
     return;
   }
   if (message.action === "quick-previous-mru") {

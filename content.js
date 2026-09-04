@@ -77,14 +77,15 @@
   }
 
   /**
-   * Arms on the first modifier we can see being held — at open time if we caught the
-   * keydown, otherwise off the next key the user presses with it still down. Chrome
-   * swallows the keydown of its own command shortcuts, so the second path is what
-   * makes this work when the switcher was opened from chrome://extensions/shortcuts.
+   * Arms the release gesture. `mods` is normally the modifier set the worker read off
+   * the bound shortcut, which is the only source that can be trusted: Chrome consumes
+   * the keydown of its own command chords, so with Ctrl+Shift+Q as the cycle key this
+   * page never sees a keydown with Ctrl held, however hard it watches the keyboard.
+   * Observed keyboard state is kept as a fallback for the in-page paths.
    */
   function armFrom(mods) {
     if (!overlayKeyState.commitOnRelease || armedMods) return;
-    var arm = armableFrom(mods);
+    var arm = armableFrom(mods || heldMods);
     if (!arm) return;
     armedMods = arm;
     LOG("release-to-switch armed on", arm);
@@ -278,11 +279,12 @@
   }
 
   /** Refresh an already-open overlay in place (used after a sort) — no rebuild flash. */
-  function updateTabs(overlay, tabs, activeTabId, counts) {
+  function updateTabs(overlay, tabs, activeTabId, counts, armMods) {
     const keepId = tabList[selectedIndex] && tabList[selectedIndex].id;
     tabList = tabs;
     currentTabId = activeTabId;
     tabCounts = counts || tabCounts;
+    armFrom(armMods);
     const i = tabList.findIndex((t) => t.id === keepId);
     selectedIndex = i >= 0 ? i : 0;
     const list = overlay.querySelector(".tts-list");
@@ -310,7 +312,7 @@
     return btn;
   }
 
-  function buildOverlay(tabs, activeTabId, counts) {
+  function buildOverlay(tabs, activeTabId, counts, armMods) {
     LOG("building overlay with", tabs.length, "tabs");
     removeOverlay();
     tabList = tabs;
@@ -318,10 +320,13 @@
     tabCounts = counts || null;
     selectedIndex = tabs.length > 1 ? 1 : 0;
     armedMods = null;
-    armFrom(heldMods);
+    armFrom(armMods);
 
     const overlay = document.createElement("div");
     overlay.id = OVERLAY_ID;
+    // Focusable so the commit keyup reaches this document and not an input or iframe
+    // that happened to hold focus. Does nothing if the page lacks browser focus.
+    overlay.tabIndex = -1;
     overlay.addEventListener("click", (e) => {
       if (e.target === overlay) removeOverlay();
     });
@@ -423,6 +428,11 @@
     requestAnimationFrame(() => {
       overlay.classList.add("tts-visible");
       scrollSelectedIntoView(list);
+      try {
+        overlay.focus({ preventScroll: true });
+      } catch (e) {
+        LOG("overlay focus failed", e);
+      }
     });
 
     tellWorker("overlay-opened");
@@ -571,9 +581,9 @@
     if (message.action === "advance-selection") {
       const overlay = document.getElementById(OVERLAY_ID);
       if (overlay) {
-        // The chord that got us here is still held, so this is also our chance to arm
-        // if the overlay was opened some other way (a toolbar click, say).
-        armFrom(heldMods);
+        // The chord that got us here is still held, so this is also our chance to
+        // arm if the overlay went up some other way (a toolbar click, say).
+        armFrom(message.armMods);
         advanceSelection(overlay, message.delta || 1);
       } else if (window.top === window) {
         // The worker still thought we had an overlay. Put one up rather than swallow
@@ -586,8 +596,8 @@
     if (message.action === "show-switcher") {
       LOG("show-switcher received with", message.tabs.length, "tabs");
       const open = document.getElementById(OVERLAY_ID);
-      if (open) updateTabs(open, message.tabs, message.activeTabId, message.counts);
-      else buildOverlay(message.tabs, message.activeTabId, message.counts);
+      if (open) updateTabs(open, message.tabs, message.activeTabId, message.counts, message.armMods);
+      else buildOverlay(message.tabs, message.activeTabId, message.counts, message.armMods);
     }
   });
 })();
