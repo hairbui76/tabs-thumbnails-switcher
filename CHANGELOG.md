@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.1](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.12.0...v1.12.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* cycle with the open shortcut, since Chrome hides Ctrl+Tab ([0071fa3](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/0071fa3f43d80e15f11de5b176220b86f8990912))
+
 ## [1.12.0](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.11.0...v1.12.0) (2026-09-04)
 
 
