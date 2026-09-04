@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.11.0...v1.12.0) (2026-09-04)
+
+
+### Features
+
+* switch on modifier release, Alt+Tab style ([f76672b](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/f76672bdaf0888377f6aad99cb5b17914a0c1e80))
+
 ## [1.11.0](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.10.0...v1.11.0) (2026-09-02)
 
 
