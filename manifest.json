@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tab Thumbnails Switcher",
-  "version": "1.12.1",
+  "version": "1.12.2",
   "description": "Switch tabs in most-recently-used order with thumbnail previews, one-click tab sorting, and a tab-count badge on the icon.",
   "permissions": [
     "tabs",
