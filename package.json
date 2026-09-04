@@ -1,6 +1,6 @@
 {
   "name": "tabs-thumbnails-switcher",
-  "version": "1.12.1",
+  "version": "1.12.2",
   "description": "Chrome extension: MRU-ordered tab switching with a thumbnail overlay (Manifest V3).",
   "private": true,
   "license": "MIT",

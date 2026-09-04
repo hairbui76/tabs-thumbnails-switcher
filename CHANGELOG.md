@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.2](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.12.1...v1.12.2) (2026-09-04)
+
+
+### Bug Fixes
+
+* arm release-to-switch from the bound shortcut, and document Tab bindings ([effb6d5](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/effb6d56a87f05544f6394bf668a4efea863f294))
+
 ## [1.12.1](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.12.0...v1.12.1) (2026-09-04)
 
 
