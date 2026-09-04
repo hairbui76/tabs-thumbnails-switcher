@@ -115,9 +115,17 @@
     return true;
   }
 
-  /** A bare key press — no modifiers beyond the armed one, which we ignore. */
-  function isBareKey(e, keys) {
-    if (keys.indexOf(e.key) === -1 || e.shiftKey) return false;
+  /**
+   * A bare key press — no modifiers beyond the armed one, which we ignore.
+   *
+   * `allowArmedShift` also forgives Shift while armed, for keys that carry their own
+   * direction. The trigger chord is usually Ctrl+Shift+Q, so Shift is down for
+   * everything the user presses; refusing it would leave the arrows dead until they
+   * let Shift go, even though up and down need no Shift to tell them apart.
+   */
+  function isBareKey(e, keys, allowArmedShift) {
+    if (keys.indexOf(e.key) === -1) return false;
+    if (e.shiftKey && !(allowArmedShift && armedMods)) return false;
     if (e.ctrlKey && !(armedMods && armedMods.ctrl)) return false;
     if (e.altKey && !(armedMods && armedMods.alt)) return false;
     if (e.metaKey && !(armedMods && armedMods.meta)) return false;
@@ -172,6 +180,22 @@
     }
     el.title = plural(inWindow, "tab") + " in this window";
     if (windows > 1) el.title += ", " + plural(total, "tab") + " across " + plural(windows, "window");
+  }
+
+  function tellWorker(action) {
+    try {
+      chrome.runtime.sendMessage({ action: action });
+    } catch (e) {
+      LOG(action + " message failed", e);
+    }
+  }
+
+  /** Moves the selection by delta, wrapping. Shared by the keys and the open shortcut. */
+  function advanceSelection(overlay, delta) {
+    if (!tabList.length) return;
+    selectedIndex = (selectedIndex + delta + tabList.length) % tabList.length;
+    LOG("advance selection by", delta, "-> index", selectedIndex);
+    updateSelection(overlay.querySelector(".tts-list"));
   }
 
   function requestSort() {
@@ -401,6 +425,8 @@
       scrollSelectedIntoView(list);
     });
 
+    tellWorker("overlay-opened");
+
     document.addEventListener("keydown", handleKeyDown, true);
     document.addEventListener("keyup", handleKeyUp, true);
     LOG("overlay shown, selected index:", selectedIndex);
@@ -468,11 +494,11 @@
       goNext();
       return;
     }
-    if (k.alsoArrows && isBareKey(e, ["ArrowDown"])) {
+    if (k.alsoArrows && isBareKey(e, ["ArrowDown"], true)) {
       goNext();
       return;
     }
-    if (k.alsoArrows && isBareKey(e, ["ArrowUp"])) {
+    if (k.alsoArrows && isBareKey(e, ["ArrowUp"], true)) {
       goPrev();
       return;
     }
@@ -528,6 +554,7 @@
       });
       setTimeout(() => overlay.remove(), 200);
       LOG("overlay removed");
+      tellWorker("overlay-closed");
     }
     tabList = [];
     selectedIndex = 0;
@@ -539,6 +566,21 @@
     if (message.action === "ping") {
       LOG("ping received");
       sendResponse({ ok: true });
+      return;
+    }
+    if (message.action === "advance-selection") {
+      const overlay = document.getElementById(OVERLAY_ID);
+      if (overlay) {
+        // The chord that got us here is still held, so this is also our chance to arm
+        // if the overlay was opened some other way (a toolbar click, say).
+        armFrom(heldMods);
+        advanceSelection(overlay, message.delta || 1);
+      } else if (window.top === window) {
+        // The worker still thought we had an overlay. Put one up rather than swallow
+        // the keypress; only the top frame answers so we do not open several.
+        LOG("advance-selection with no overlay — opening instead");
+        tellWorker("gesture-open-switcher");
+      }
       return;
     }
     if (message.action === "show-switcher") {

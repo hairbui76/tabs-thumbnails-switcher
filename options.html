@@ -212,7 +212,8 @@
         <input type="checkbox" id="commitOnRelease" />
         <span>Switch on modifier release (Alt+Tab style)</span>
       </label>
-      <p>Hold the modifier that opened the switcher &mdash; <kbd>Ctrl</kbd> for the default <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Q</kbd> &mdash; tap <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> to move, then <strong>let the modifier go to switch</strong>. <kbd>Enter</kbd> and <kbd>Escape</kbd> keep working. <kbd>Shift</kbd> is never the commit key, so it stays free to reverse direction. Off by default: with it on, opening the switcher and letting go to reach for the mouse switches tabs.</p>
+      <p><strong>Keep holding</strong> the shortcut that opened the switcher, cycle, then <strong>let go of <kbd>Ctrl</kbd> to switch</strong>. <kbd>Enter</kbd> and <kbd>Escape</kbd> keep working. Off by default: with it on, opening the switcher and letting go to reach for the mouse would switch tabs.</p>
+      <p>To cycle while holding, <strong>tap the open shortcut again</strong> (with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Q</kbd>, keep <kbd>Ctrl</kbd>+<kbd>Shift</kbd> down and tap <kbd>Q</kbd>), or use <kbd>&darr;</kbd> / <kbd>&uarr;</kbd>. <strong><kbd>Tab</kbd> cannot be used here:</strong> Chrome reserves <kbd>Ctrl</kbd>+<kbd>Tab</kbd> for its own tab switching and never delivers it to a page, so the switcher never sees it.</p>
 
       <h2>Tab count</h2>
       <p>The toolbar icon shows a <strong>badge with the number of tabs open in the focused window</strong> (<code>999+</code> past 999), and its tooltip spells the number out. The switcher header repeats it as a pill next to the title, plus a cross-window total when you have more than one window open. Only normal browser windows count &mdash; not popups, app windows or devtools.</p>

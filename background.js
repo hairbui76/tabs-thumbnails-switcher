@@ -10,6 +10,12 @@ let mruList = [];
 let thumbnails = {};
 let lastAccessed = {};
 let captureTimer = null;
+/**
+ * Tab whose page currently has the switcher up, so a second press of the open
+ * shortcut can advance the selection instead of rebuilding the overlay. The content
+ * script reports both ends; a stale value self-heals on the next press.
+ */
+let overlayTabId = null;
 
 /**
  * The service worker is torn down when idle, so every event handler must wait for
@@ -207,6 +213,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   LOG("tab removed:", tabId);
+  if (overlayTabId === tabId) overlayTabId = null;
   await ready();
   mruList = mruList.filter((id) => id !== tabId);
   delete thumbnails[tabId];
@@ -501,11 +508,43 @@ chrome.commands.onCommand.addListener((command) => {
   }
   if (command === "open-tab-switcher") {
     LOG("command: open tab switcher (menu)");
-    void showSwitcher();
+    void advanceOrOpen();
   }
 });
 
-chrome.runtime.onMessage.addListener((message) => {
+/**
+ * Chrome reserves Ctrl+Tab for its own tab switching and never dispatches it to a
+ * page, so it cannot be the cycle key while Ctrl is held. Tapping the open shortcut
+ * again is the cycle instead — Alt+Tab's own gesture, just with Q for Tab — which
+ * reaches us through the commands API rather than the page.
+ */
+async function advanceOrOpen() {
+  await ready();
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (activeTab && overlayTabId === activeTab.id) {
+    try {
+      await chrome.tabs.sendMessage(activeTab.id, { action: "advance-selection", delta: 1 });
+      LOG("advanced selection in tab", activeTab.id);
+      return;
+    } catch (e) {
+      LOG("advance failed, reopening:", e && e.message);
+      overlayTabId = null;
+    }
+  }
+  await showSwitcher();
+}
+
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message.action === "overlay-opened") {
+    overlayTabId = sender && sender.tab ? sender.tab.id : null;
+    LOG("overlay open on tab", overlayTabId);
+    return;
+  }
+  if (message.action === "overlay-closed") {
+    if (!sender || !sender.tab || sender.tab.id === overlayTabId) overlayTabId = null;
+    LOG("overlay closed");
+    return;
+  }
   if (message.action === "gesture-open-switcher") {
     void showSwitcher();
     return;

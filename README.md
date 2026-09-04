@@ -55,13 +55,23 @@ If a configured navigation key is rebound to **S**, that binding wins and the so
 
 ### Switch on modifier release (Alt+Tab style)
 
-Off by default; turn it on in **Options → Overlay**. With it on, the switcher behaves like the Windows Alt+Tab dialog: **hold** the modifier that opened it, tap <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> to move, then **let the modifier go to switch**. Enter and Escape keep working.
+Off by default; turn it on in **Options → Overlay**. With it on, the switcher works like the Windows Alt+Tab dialog: **keep holding** the shortcut that opened it, cycle, then **let go of Ctrl to switch**. Enter and Escape keep working.
 
-- The held modifier is ignored when matching bindings, so `Ctrl`+<kbd>Tab</kbd> still counts as plain "next" while you hold Ctrl.
-- **Shift is never the commit key.** It has to stay free to tell "previous" from "next", so holding <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Q</kbd> arms on Ctrl alone and releasing Shift does nothing.
-- It arms from whichever modifier is held when the switcher opens, or from the next key you press with one still down. That second path matters because Chrome swallows the keydown of its own command shortcuts, so the extension may never see the `Ctrl` of `Ctrl+Shift+Q` go down.
+To cycle while holding, either:
+
+- **tap the open shortcut again** — with `Ctrl+Shift+Q`, keep Ctrl+Shift down and tap <kbd>Q</kbd>; or
+- press <kbd>&darr;</kbd> / <kbd>&uarr;</kbd>.
+
+**<kbd>Tab</kbd> does not work as the cycle key**, and cannot be made to. Chrome reserves `Ctrl+Tab` and `Ctrl+Shift+Tab` for its own tab switching and [never dispatches them to a page](https://lists.w3.org/Archives/Public/public-webapps-github/2016Jan/0255.html) — deliberately, so that a page cannot trap a keyboard-only user by swallowing every key. Firefox does deliver them and ignores `preventDefault`; Chrome, Safari and Edge do not deliver them at all. So the switcher never sees `Ctrl+Tab`, which is also why tapping the open shortcut is routed through the `commands` API instead of the page.
+
+The rest of the details:
+
+- Cycling by re-tapping the shortcut only moves **forwards** — the chord already contains Shift, so there is no reversed variant of it. Use <kbd>&uarr;</kbd> to go back.
+- **Shift is never the commit key.** It has to stay free to tell "previous" from "next", so holding `Ctrl+Shift+Q` arms on Ctrl alone and releasing Shift does nothing. For the same reason the arrows accept Shift while armed: the chord holds it down anyway, and up/down need no Shift to tell them apart.
+- The held modifier is masked out when matching bindings, so a binding of plain <kbd>J</kbd> still fires while you hold Ctrl.
+- It arms from whichever modifier is held when the switcher opens, or from the next key you press with one still down. That second path matters because Chrome swallows the keydown of its own command shortcuts.
 - If you release the modifier before the overlay has finished injecting there is no keyup left to catch, so nothing is armed and the overlay simply waits for Enter or Escape.
-- `Alt+Tab` itself cannot be used as the trigger: Chrome's `commands` API does not accept `Tab` as a shortcut key, and Windows and most Linux desktops grab Alt+Tab before Chrome sees it. Alt also makes a poor hold key on Windows, where tapping it moves focus to Chrome's toolbar.
+- `Alt+Tab` cannot be the trigger either: Chrome's `commands` API does not accept `Tab` as a shortcut key at all, and Windows and most Linux desktops grab Alt+Tab before Chrome sees it. Alt is also a poor hold key on Windows, where tapping it moves focus to Chrome's toolbar.
 - Like the rest of the overlay, this needs a content script, so it does not apply on `chrome://` pages, the Web Store, or the PDF viewer.
 
 ## Tab count
