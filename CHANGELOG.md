@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.3](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.12.2...v1.12.3) (2026-09-04)
+
+
+### Bug Fixes
+
+* commit on any modifier release, not only an identified chord ([b7e324d](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/b7e324d3776a6e236751e17904ca1c48cea8dd82))
+
 ## [1.12.2](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.12.1...v1.12.2) (2026-09-04)
 
 
