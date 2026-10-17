@@ -111,6 +111,21 @@
   display: none;
 }
 
+.tts-header-memory {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.28);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  cursor: default;
+}
+
+.tts-header-memory[hidden] {
+  display: none;
+}
+
 .tts-header-actions {
   display: flex;
   align-items: center;
@@ -148,6 +163,88 @@
 .tts-header-btn:focus-visible {
   outline: 2px solid rgba(99, 131, 255, 0.7);
   outline-offset: 1px;
+}
+
+/* Text buttons ("Sleep 12") size to their label instead of the 36px icon square. */
+.tts-header-sleep {
+  width: auto;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  /* The first text button in the header; keep page styles from leaking in. */
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.tts-header-sleep[disabled],
+.tts-header-sleep[disabled]:hover,
+.tts-header-sleep[disabled]:active {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.2);
+  cursor: default;
+}
+
+.tts-asleep {
+  margin-right: 5px;
+  font-size: 12px;
+  cursor: help;
+}
+
+/*
+ * Zero-height, in flow between the list and the key legend. The toast hangs above it,
+ * so it can never cover the legend, and showing it never shifts the list.
+ */
+.tts-toast-anchor {
+  position: relative;
+  height: 0;
+  flex-shrink: 0;
+}
+
+.tts-toast {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 8px;
+  width: fit-content;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #e4e4e7;
+  background: rgba(48, 48, 58, 0.98);
+  border: 1px solid rgba(99, 131, 255, 0.4);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  animation: tts-toast-in 0.15s ease;
+  z-index: 1;
+  /* Clicks fall through to the cards underneath; only the toast's buttons take them. */
+  pointer-events: none;
+}
+
+.tts-toast button {
+  pointer-events: auto;
+}
+
+/* Wraps rather than ellipsizes: the toast is the only place the result is reported. */
+.tts-toast-text {
+  min-width: 0;
+}
+
+@keyframes tts-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .tts-visited {
@@ -338,6 +435,10 @@
     color: rgba(0, 0, 0, 0.35);
   }
 
+  .tts-header-memory {
+    color: rgba(0, 0, 0, 0.35);
+  }
+
   .tts-header-btn {
     color: rgba(0, 0, 0, 0.45);
   }
@@ -350,6 +451,20 @@
   .tts-header-btn:active {
     background: rgba(59, 91, 219, 0.14);
     color: #2338a8;
+  }
+
+  .tts-header-sleep[disabled],
+  .tts-header-sleep[disabled]:hover,
+  .tts-header-sleep[disabled]:active {
+    background: transparent;
+    color: rgba(0, 0, 0, 0.22);
+  }
+
+  .tts-toast {
+    color: #27272a;
+    background: rgba(255, 255, 255, 0.99);
+    border-color: rgba(59, 91, 219, 0.35);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
   }
 
   .tts-card:hover {

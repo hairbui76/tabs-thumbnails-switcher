@@ -459,6 +459,91 @@ async function readMemory() {
   }
 }
 
+/** Chrome hands renderer memory back with a short delay after a discard. */
+const SLEEP_SETTLE_MS = 1500;
+
+/**
+ * Discards (puts to sleep) each tab and measures how much machine-wide free memory
+ * that released. No filtering here: callers pass exactly the tabs to sleep.
+ *
+ * A discard that rejects, or resolves without a tab, counts as failed. Chrome may
+ * give a discarded tab a new id; `replaced` maps old id -> new id for those.
+ * `freedBytes` is the change in free memory, or null when either reading failed or
+ * nothing slept (a figure then would be pure noise from other apps).
+ */
+async function sleepTabs(tabIds) {
+  const ids = tabIds || [];
+  const before = await readMemory();
+  let slept = 0;
+  let failed = 0;
+  const replaced = {};
+  const results = await Promise.allSettled(ids.map((id) => chrome.tabs.discard(id)));
+  results.forEach((res, i) => {
+    const id = ids[i];
+    if (res.status === "rejected") {
+      failed++;
+      LOG("sleep: discard failed for tab", id, ":", res.reason && res.reason.message);
+      return;
+    }
+    const tab = res.value;
+    if (!tab) {
+      failed++;
+      LOG("sleep: discard returned nothing for tab", id);
+      return;
+    }
+    slept++;
+    if (tab.id !== id) replaced[id] = tab.id;
+  });
+  if (slept === 0) return { slept, failed, freedBytes: null, replaced };
+
+  await new Promise((r) => setTimeout(r, SLEEP_SETTLE_MS));
+  const after = await readMemory();
+  const freedBytes = before && after ? after.available - before.available : null;
+  return { slept, failed, freedBytes, replaced };
+}
+
+/** Set while a sleep-tabs request runs, so a double press cannot discard twice. */
+let sleepInFlight = false;
+
+/**
+ * The overlay's Sleep button / Z key. Candidates come from the live tabs of the
+ * window the overlay is on (never from the list the overlay rendered, which may be
+ * stale), then the overlay is redrawn in place with the result toast.
+ */
+async function sleepFromOverlay(senderTab) {
+  if (sleepInFlight) {
+    LOG("sleep-tabs: already running — ignored");
+    return;
+  }
+  sleepInFlight = true;
+  try {
+    const windowTabs = await chrome.tabs.query({ windowId: senderTab.windowId });
+    const active = windowTabs.find((t) => t.active);
+    const ids = sleepCandidates(windowTabs, active ? active.id : senderTab.id);
+    if (!ids.length) {
+      LOG("sleep-tabs: nothing to sleep in window", senderTab.windowId);
+      await showSwitcher({ refreshTabId: senderTab.id });
+      return;
+    }
+    LOG("sleep-tabs: sleeping", ids.length, "tabs:", ids);
+    const r = await sleepTabs(ids);
+    LOG(
+      "sleep-tabs: slept", r.slept, "failed", r.failed,
+      "freed", r.freedBytes == null ? "(unknown)" : r.freedBytes + " bytes",
+      "replaced", r.replaced
+    );
+    await showSwitcher({ result: { text: sleepToastText(r) }, refreshTabId: senderTab.id });
+  } catch (e) {
+    LOG("sleep-tabs failed:", e && e.message);
+    // The overlay shows "Sleeping…" until a redraw arrives; send one regardless.
+    await showSwitcher({ refreshTabId: senderTab.id }).catch((err) => {
+      LOG("sleep-tabs: refresh after failure failed:", err && err.message);
+    });
+  } finally {
+    sleepInFlight = false;
+  }
+}
+
 async function showSwitcher(opts) {
   const order = (opts && opts.order) || "mru";
   const refreshTabId = (opts && opts.refreshTabId) != null ? opts.refreshTabId : null;
@@ -536,6 +621,9 @@ async function showSwitcher(opts) {
       counts,
       armMods: (opts && opts.armMods) || null,
       openedByKey: !!(opts && opts.openedByKey),
+      // A redraw of an overlay the page already has: the page drops it if that overlay
+      // was closed meanwhile, and never re-arms switch-on-release from it.
+      refresh: refreshTabId != null,
       memory,
       memoryText,
       result: (opts && opts.result) || null,
@@ -685,6 +773,15 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.action === "sort-tabs") {
     LOG("sort-tabs requested from overlay");
     void sortWindowTabs().then(() => showSwitcher({ order: "index" }));
+    return;
+  }
+  if (message.action === "sleep-tabs") {
+    if (!sender || !sender.tab) {
+      LOG("sleep-tabs: no sender tab — ignored");
+      return;
+    }
+    LOG("sleep-tabs requested from overlay on tab", sender.tab.id);
+    void sleepFromOverlay(sender.tab);
     return;
   }
   if (message.action === "refresh-switcher") {

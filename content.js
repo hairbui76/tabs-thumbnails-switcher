@@ -18,13 +18,34 @@
   };
 
   const OVERLAY_ID = "tts-overlay";
+  /**
+   * Marks an overlay that is fading out. It keeps its id (all of content.css hangs off
+   * #tts-overlay, so dropping the id would unstyle it mid-fade), but findOverlay skips
+   * it so nothing arriving during the fade updates a dying overlay.
+   */
+  const CLOSING_CLASS = "tts-closing";
+
+  /** The live overlay, or null — never one that is fading out. */
+  function findOverlay() {
+    return document.querySelector("#" + OVERLAY_ID + ":not(." + CLOSING_CLASS + ")");
+  }
   const SORT_TITLE =
     "Sort tabs — the 10 most recently visited first, then grouped by site, title, visit time. Also reorders the real Chrome tabs.";
+  const SLEEP_EXCLUDED = "The current tab, pinned tabs and tabs playing sound stay awake.";
+  const ASLEEP_TITLE = "Asleep — reloads when you open it";
+  /** How long a result toast stays up. */
+  const TOAST_MS = 8000;
 
   let selectedIndex = 0;
   let tabList = [];
   let currentTabId = null;
   let tabCounts = null;
+  /** Cleanup figures from the latest show-switcher payload, precomputed by the worker. */
+  let sleepCount = 0;
+  let memoryText = "";
+  let toastTimer = null;
+  /** A sleep-tabs request is out; cleared by the redraw that answers it. */
+  let sleepPending = false;
   var overlayKeyState = OK.merge(null);
 
   function pullOverlayKeys() {
@@ -91,7 +112,9 @@
    * Observed keyboard state is kept as a fallback for the in-page paths.
    */
   function armFrom(mods) {
-    if (!overlayKeyState.commitOnRelease || armedMods) return;
+    // While a sleep runs, stay disarmed: the Z keyup of a Ctrl+Z would otherwise re-arm
+    // on the still-held Ctrl and its release would switch to a tab being put to sleep.
+    if (!overlayKeyState.commitOnRelease || armedMods || sleepPending) return;
     var arm = armableFrom(mods || heldMods);
     if (!arm) return;
     armedMods = arm;
@@ -198,6 +221,85 @@
     if (windows > 1) el.title += ", " + plural(total, "tab") + " across " + plural(windows, "window");
   }
 
+  /** Takes the cleanup figures off a show-switcher payload into module state. */
+  function applyPayload(message) {
+    sleepCount = message.sleepCount || 0;
+    memoryText = message.memoryText || "";
+    sleepPending = false;
+  }
+
+  /** Fills the header's memory line and the Sleep N button from module state. */
+  function paintCleanup(overlay) {
+    const mem = overlay.querySelector(".tts-header-memory");
+    if (mem) {
+      mem.textContent = memoryText;
+      mem.hidden = !memoryText;
+    }
+    const sleep = overlay.querySelector(".tts-header-sleep");
+    if (sleep) {
+      sleep.textContent = sleepPending ? "Sleeping…" : "Sleep " + sleepCount;
+      sleep.disabled = sleepPending || sleepCount === 0;
+      sleep.title = sleepPending
+        ? "Putting tabs to sleep…"
+        : sleepCount === 0
+          ? "Nothing to put to sleep — the other tabs are asleep already or must stay awake. " + SLEEP_EXCLUDED
+          : "Put " + plural(sleepCount, "background tab") + " to sleep to free memory (Z). They reload when you open them. " + SLEEP_EXCLUDED;
+    }
+  }
+
+  /**
+   * The key legend under the list. Rebuilt on every draw so later cleanup keys can be
+   * shown only when they have something to do.
+   */
+  function paintHint(overlay) {
+    const hint = overlay.querySelector(".tts-hint");
+    if (!hint) return;
+    hint.innerHTML =
+      OK.hint(overlayKeyState) +
+      ' &nbsp; <span class="tts-key">S</span> sort tabs' +
+      ' &nbsp; <span class="tts-key">Z</span> sleep';
+  }
+
+  /**
+   * A result line at the bottom of the switcher (after Sleep, say), floating just above
+   * the key legend. Replaces any toast already up and hides itself after TOAST_MS. The
+   * Undo button is rendered when the result carries an undo batch; its click handler is
+   * wired in a later step.
+   */
+  function showToast(overlay, result) {
+    if (!overlay || !result || !result.text) return;
+    const anchor = overlay.querySelector(".tts-toast-anchor");
+    if (!anchor) {
+      LOG("showToast: no toast anchor under the overlay");
+      return;
+    }
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = null;
+    anchor.textContent = "";
+
+    const toast = document.createElement("div");
+    toast.className = "tts-toast";
+    toast.setAttribute("role", "status");
+    const text = document.createElement("span");
+    text.className = "tts-toast-text";
+    text.textContent = result.text;
+    toast.appendChild(text);
+    if (result.undoBatchId) {
+      const undo = document.createElement("button");
+      undo.type = "button";
+      undo.className = "tts-toast-undo";
+      undo.textContent = "Undo";
+      undo.dataset.batchId = result.undoBatchId;
+      toast.appendChild(undo);
+    }
+    anchor.appendChild(toast);
+    toastTimer = setTimeout(() => {
+      toastTimer = null;
+      toast.remove();
+    }, TOAST_MS);
+    LOG("toast:", result.text, result.undoBatchId ? "(undo " + result.undoBatchId + ")" : "");
+  }
+
   function tellWorker(action) {
     try {
       chrome.runtime.sendMessage({ action: action });
@@ -221,6 +323,27 @@
     } catch (e) {
       LOG("sort request failed", e);
     }
+  }
+
+  /** The worker recomputes the candidates from live tabs; sleepCount only gates the request. */
+  function requestSleep() {
+    if (sleepPending) {
+      LOG("sleep: already running");
+      return;
+    }
+    if (sleepCount === 0) {
+      LOG("sleep: nothing to put to sleep");
+      return;
+    }
+    // Ctrl+Z with switch-on-release armed would otherwise switch to — and reload — a
+    // tab that is being put to sleep the moment Ctrl goes up.
+    armedMods = null;
+    openedByKey = false;
+    sleepPending = true;
+    const overlay = findOverlay();
+    if (overlay) paintCleanup(overlay);
+    LOG("requesting sleep of", sleepCount, "tabs (release-to-switch disarmed)");
+    tellWorker("sleep-tabs");
   }
 
   function renderList(list) {
@@ -249,7 +372,15 @@
 
       const title = document.createElement("div");
       title.className = "tts-title";
-      title.textContent = tab.title;
+      // Ahead of the text so a long, ellipsized title cannot push it out of view.
+      if (tab.discarded) {
+        const asleep = document.createElement("span");
+        asleep.className = "tts-asleep";
+        asleep.title = ASLEEP_TITLE;
+        asleep.textContent = "💤";
+        title.appendChild(asleep);
+      }
+      title.appendChild(document.createTextNode(tab.title));
       textBlock.appendChild(title);
 
       const domain = document.createElement("div");
@@ -293,30 +424,38 @@
     });
   }
 
-  /** Refresh an already-open overlay in place (used after a sort) — no rebuild flash. */
-  function updateTabs(overlay, tabs, activeTabId, counts, armMods, byKey) {
+  /**
+   * Refresh an already-open overlay in place (after a sort or a sleep) — no rebuild
+   * flash. Takes the whole show-switcher message.
+   */
+  function updateTabs(overlay, message) {
     const keepId = tabList[selectedIndex] && tabList[selectedIndex].id;
-    tabList = tabs;
-    currentTabId = activeTabId;
-    tabCounts = counts || tabCounts;
-    if (byKey) openedByKey = true;
-    armFrom(armMods);
+    tabList = message.tabs;
+    currentTabId = message.activeTabId;
+    tabCounts = message.counts || tabCounts;
+    applyPayload(message);
+    // A refresh (after a sleep, say) is not a key press: arming here would fall back to
+    // whatever modifiers happen to be held and re-arm switch-on-release.
+    if (!message.refresh) {
+      if (message.openedByKey) openedByKey = true;
+      armFrom(message.armMods);
+    }
     const i = tabList.findIndex((t) => t.id === keepId);
     selectedIndex = i >= 0 ? i : 0;
     const list = overlay.querySelector(".tts-list");
     renderList(list);
     paintCounts(overlay);
+    paintCleanup(overlay);
+    paintHint(overlay);
     scrollSelectedIntoView(list);
     LOG("overlay list refreshed, selected index:", selectedIndex);
   }
 
-  function buildHeaderButton(className, label, svg, onClick) {
+  /** A header button whose clicks never leave DOM focus on it. */
+  function buildBareHeaderButton(className, onClick) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = className;
-    btn.setAttribute("aria-label", label);
-    btn.setAttribute("title", label);
-    btn.innerHTML = svg;
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       e.preventDefault();
@@ -328,16 +467,27 @@
     return btn;
   }
 
-  function buildOverlay(tabs, activeTabId, counts, armMods, byKey) {
+  function buildHeaderButton(className, label, svg, onClick) {
+    const btn = buildBareHeaderButton(className, onClick);
+    btn.setAttribute("aria-label", label);
+    btn.setAttribute("title", label);
+    btn.innerHTML = svg;
+    return btn;
+  }
+
+  /** Builds the overlay from a show-switcher message and returns it. */
+  function buildOverlay(message) {
+    const tabs = message.tabs;
     LOG("building overlay with", tabs.length, "tabs");
     removeOverlay();
     tabList = tabs;
-    currentTabId = activeTabId;
-    tabCounts = counts || null;
+    currentTabId = message.activeTabId;
+    tabCounts = message.counts || null;
+    applyPayload(message);
     selectedIndex = tabs.length > 1 ? 1 : 0;
     armedMods = null;
-    openedByKey = !!byKey;
-    armFrom(armMods);
+    openedByKey = !!message.openedByKey;
+    armFrom(message.armMods);
 
     const overlay = document.createElement("div");
     overlay.id = OVERLAY_ID;
@@ -390,12 +540,21 @@
     total.hidden = true;
     subLine.appendChild(total);
 
+    const memory = document.createElement("span");
+    memory.className = "tts-header-memory";
+    memory.title = "Free memory on this computer, as Chrome reports it";
+    memory.hidden = true;
+    subLine.appendChild(memory);
+
     headerMain.appendChild(subLine);
 
     header.appendChild(headerMain);
 
     const actions = document.createElement("div");
     actions.className = "tts-header-actions";
+
+    // Label, count and disabled state are painted by paintCleanup.
+    actions.appendChild(buildBareHeaderButton("tts-header-btn tts-header-sleep", requestSleep));
 
     actions.appendChild(
       buildHeaderButton(
@@ -431,15 +590,22 @@
     renderList(list);
     container.appendChild(list);
 
+    // Zero-height, in flow between the list and the legend: the toast hangs above it, so
+    // it can never cover the legend however many lines that wraps to, and showing or
+    // hiding it never shifts the list.
+    const toastAnchor = document.createElement("div");
+    toastAnchor.className = "tts-toast-anchor";
+    container.appendChild(toastAnchor);
+
     const hint = document.createElement("div");
     hint.className = "tts-hint";
-    hint.innerHTML =
-      OK.hint(overlayKeyState) + ' &nbsp; <span class="tts-key">S</span> sort tabs';
     container.appendChild(hint);
 
     overlay.appendChild(container);
-    // After the container is attached — paintCounts looks the pill up through `overlay`.
+    // After the container is attached — the painters look their elements up through `overlay`.
     paintCounts(overlay);
+    paintCleanup(overlay);
+    paintHint(overlay);
     document.documentElement.appendChild(overlay);
 
     requestAnimationFrame(() => {
@@ -457,6 +623,7 @@
     document.addEventListener("keydown", handleKeyDown, true);
     document.addEventListener("keyup", handleKeyUp, true);
     LOG("overlay shown, selected index:", selectedIndex);
+    return overlay;
   }
 
   function updateSelection(list) {
@@ -475,7 +642,7 @@
   }
 
   function handleKeyDown(e) {
-    const overlay = document.getElementById(OVERLAY_ID);
+    const overlay = findOverlay();
     if (!overlay) return;
 
     const list = overlay.querySelector(".tts-list");
@@ -538,6 +705,15 @@
       requestSort();
       return;
     }
+    // Same rule as S: a configured binding on Z was matched above and wins. Swallowed
+    // even with nothing to sleep, so it never reaches the page (Gmail's undo, say).
+    if (isBareKey(e, ["z", "Z"])) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat) return;
+      requestSleep();
+      return;
+    }
   }
 
   /**
@@ -546,7 +722,7 @@
    * on, so with it off this is two boolean reads per keyup.
    */
   function handleKeyUp(e) {
-    if (!document.getElementById(OVERLAY_ID)) return;
+    if (!findOverlay()) return;
     if (!overlayKeyState.commitOnRelease) return;
     // Logged for every keyup so an empty log distinguishes "we decided not to commit"
     // from "this page is not receiving key events at all".
@@ -579,8 +755,11 @@
     document.removeEventListener("keydown", handleKeyDown, true);
     document.removeEventListener("keyup", handleKeyUp, true);
     armedMods = null;
-    const overlay = document.getElementById(OVERLAY_ID);
+    const overlay = findOverlay();
     if (overlay) {
+      // From here on findOverlay() no longer sees it, so a redraw or key arriving during
+      // the fade cannot touch it.
+      overlay.classList.add(CLOSING_CLASS);
       overlay.classList.remove("tts-visible");
       overlay.addEventListener("transitionend", () => overlay.remove(), {
         once: true,
@@ -593,6 +772,11 @@
     selectedIndex = 0;
     currentTabId = null;
     tabCounts = null;
+    sleepCount = 0;
+    memoryText = "";
+    sleepPending = false;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = null;
     openedByKey = false;
   }
 
@@ -603,7 +787,7 @@
       return;
     }
     if (message.action === "advance-selection") {
-      const overlay = document.getElementById(OVERLAY_ID);
+      const overlay = findOverlay();
       if (overlay) {
         // The chord that got us here is still held, so this is also our chance to
         // identify it if the overlay went up some other way (a toolbar click, say).
@@ -620,12 +804,20 @@
     }
     if (message.action === "show-switcher") {
       LOG("show-switcher received with", message.tabs.length, "tabs");
-      const open = document.getElementById(OVERLAY_ID);
-      if (open) {
-        updateTabs(open, message.tabs, message.activeTabId, message.counts, message.armMods, message.openedByKey);
-      } else {
-        buildOverlay(message.tabs, message.activeTabId, message.counts, message.armMods, message.openedByKey);
+      const open = findOverlay();
+      if (!open && message.refresh) {
+        // The user closed the overlay while the worker was busy (Esc during a sleep);
+        // a redraw must not bring it back.
+        LOG("refresh for an overlay that is no longer open — ignored");
+        return;
       }
+      let overlay = open;
+      if (open) {
+        updateTabs(open, message);
+      } else {
+        overlay = buildOverlay(message);
+      }
+      if (message.result) showToast(overlay, message.result);
     }
   });
 })();
