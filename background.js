@@ -633,7 +633,8 @@ function newUndoBatchId() {
 
 /**
  * Closes the tabs and records them so undoClose can bring them back. Ids that no
- * longer exist are skipped, and each tab is removed on its own, so one that vanishes
+ * longer exist are skipped, as are the active tab and pinned tabs (whatever the
+ * caller planned from), and each tab is removed on its own, so one that vanishes
  * meanwhile cannot fail the rest; exactly the tabs that closed are recorded, in the
  * order they were closed.
  *
@@ -645,9 +646,15 @@ async function closeTabsRecorded(tabIds) {
   if (!ids.length) return { batchId: null, closed: 0 };
 
   const found = await Promise.all(ids.map((id) => chrome.tabs.get(id).catch(() => null)));
-  const live = found.filter(Boolean);
-  if (live.length < ids.length) {
-    LOG("close: skipping vanished tabs:", ids.filter((id) => !live.some((t) => t.id === id)));
+  const existing = found.filter(Boolean);
+  if (existing.length < ids.length) {
+    LOG("close: skipping vanished tabs:", ids.filter((id) => !existing.some((t) => t.id === id)));
+  }
+  // Safety net for callers planning from a stale snapshot (Dedupe): the active tab and
+  // pinned tabs are never closed from here.
+  const live = existing.filter((t) => !t.active && !t.pinned);
+  if (live.length < existing.length) {
+    LOG("close: skipping active/pinned tabs:", existing.filter((t) => t.active || t.pinned).map((t) => t.id));
   }
   if (!live.length) return { batchId: null, closed: 0 };
 
@@ -1003,7 +1010,7 @@ async function ensureContentScript(tabId) {
       files: ["debug-helpers.js", "key-gesture.js", "overlay-keys.js", "tidy-mode.js"],
     });
   } catch (e) {
-    LOG("optional key-gesture re-inject:", e.message);
+    LOG("optional re-inject of the helper scripts failed:", e.message);
   }
 }
 

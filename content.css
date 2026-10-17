@@ -189,7 +189,10 @@
 .tts-header-dedupe[disabled]:active,
 .tts-header-tidy[disabled],
 .tts-header-tidy[disabled]:hover,
-.tts-header-tidy[disabled]:active {
+.tts-header-tidy[disabled]:active,
+.tts-header-sort[disabled],
+.tts-header-sort[disabled]:hover,
+.tts-header-sort[disabled]:active {
   background: transparent;
   color: rgba(255, 255, 255, 0.2);
   cursor: default;
@@ -279,6 +282,14 @@
 .tts-toast-undo:hover {
   background: rgba(99, 131, 255, 0.18);
   color: #dbe2ff;
+}
+
+/* While a cleanup action runs (see paintCleanup). */
+.tts-toast-undo[disabled],
+.tts-toast-undo[disabled]:hover {
+  background: transparent;
+  color: rgba(157, 177, 255, 0.35);
+  cursor: default;
 }
 
 .tts-toast-undo:focus-visible {
@@ -713,7 +724,10 @@
   .tts-header-dedupe[disabled]:active,
   .tts-header-tidy[disabled],
   .tts-header-tidy[disabled]:hover,
-  .tts-header-tidy[disabled]:active {
+  .tts-header-tidy[disabled]:active,
+  .tts-header-sort[disabled],
+  .tts-header-sort[disabled]:hover,
+  .tts-header-sort[disabled]:active {
     background: transparent;
     color: rgba(0, 0, 0, 0.22);
   }
@@ -791,6 +805,12 @@
   .tts-toast-undo:hover {
     background: rgba(59, 91, 219, 0.12);
     color: #2338a8;
+  }
+
+  .tts-toast-undo[disabled],
+  .tts-toast-undo[disabled]:hover {
+    background: transparent;
+    color: rgba(47, 74, 194, 0.35);
   }
 
   .tts-card:hover {

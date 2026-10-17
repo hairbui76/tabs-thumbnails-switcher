@@ -42,6 +42,8 @@
     "Go through this window's tabs one at a time, least recently visited first (T): close, keep or put each to sleep.";
   /** Tidy-up's letters (and T, which opens it): swallowed under tidy-up even with modifiers. */
   const TIDY_LETTERS = ["x", "k", "z", "u", "t"];
+  /** Non-character keys swallowed under tidy-up when pressed without Ctrl/Alt/Meta (Shift is fine). */
+  const TIDY_NAV_KEYS = ["Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End"];
   /** How long a result toast stays up. */
   const TOAST_MS = 8000;
 
@@ -56,7 +58,8 @@
   let toastTimer = null;
   /**
    * The cleanup action whose request is out — null, "sleep" or "dedupe". One at a
-   * time; cleared by the redraw that answers it.
+   * time; cleared by the redraw that answers it. Sort and a toast's Undo wait too,
+   * since any redraw clears it.
    */
   let pendingAction = null;
   /** Tab ids for tidy-up, least recently visited first, from the latest payload. */
@@ -257,7 +260,10 @@
     pendingAction = null;
   }
 
-  /** Fills the header's memory line and the Sleep N / Dedupe N buttons from module state. */
+  /**
+   * Fills the header's memory line, the Sleep N / Dedupe N / Tidy up buttons and the
+   * disabled state of Sort and of a toast's Undo, from module state.
+   */
   function paintCleanup(overlay) {
     const mem = overlay.querySelector(".tts-header-memory");
     if (mem) {
@@ -301,21 +307,52 @@
       tidyBtn.disabled = pendingAction !== null || !!tidy;
       tidyBtn.title = pendingAction ? busy : tidy ? "Tidy-up is open" : TIDY_TITLE;
     }
+    // Sort and Undo both end in a redraw, which would clear pendingAction while the
+    // action is still running.
+    const sortBtn = overlay.querySelector(".tts-header-sort");
+    if (sortBtn) {
+      sortBtn.disabled = pendingAction !== null;
+      sortBtn.title = pendingAction ? busy : SORT_TITLE;
+    }
+    const undo = overlay.querySelector(".tts-toast-undo");
+    if (undo) {
+      undo.disabled = pendingAction !== null;
+      undo.title = pendingAction ? busy : "";
+    }
+  }
+
+  /**
+   * Whether a configured binding (next, previous, switch, close) is this bare letter
+   * (lower case). That binding wins, so the built-in letter key (S, Z, D, T) is neither
+   * handled nor shown in the legend.
+   */
+  function letterTaken(letter) {
+    const k = overlayKeyState;
+    return [k.next, k.prev, k.switch, k.close].some(
+      (spec) =>
+        spec &&
+        typeof spec.k === "string" &&
+        spec.k.toLowerCase() === letter &&
+        !spec.shift &&
+        !spec.ctrl &&
+        !spec.alt &&
+        !spec.meta
+    );
   }
 
   /**
    * The key legend under the list. Rebuilt on every draw so later cleanup keys can be
-   * shown only when they have something to do.
+   * shown only when they have something to do, and left out when a binding takes them.
    */
   function paintHint(overlay) {
     const hint = overlay.querySelector(".tts-hint");
     if (!hint) return;
     hint.innerHTML =
       OK.hint(overlayKeyState) +
-      ' &nbsp; <span class="tts-key">S</span> sort tabs' +
-      ' &nbsp; <span class="tts-key">Z</span> sleep' +
-      (dedupeCount > 0 ? ' &nbsp; <span class="tts-key">D</span> dedupe' : "") +
-      ' &nbsp; <span class="tts-key">T</span> tidy up';
+      (letterTaken("s") ? "" : ' &nbsp; <span class="tts-key">S</span> sort tabs') +
+      (letterTaken("z") ? "" : ' &nbsp; <span class="tts-key">Z</span> sleep') +
+      (dedupeCount > 0 && !letterTaken("d") ? ' &nbsp; <span class="tts-key">D</span> dedupe' : "") +
+      (letterTaken("t") ? "" : ' &nbsp; <span class="tts-key">T</span> tidy up');
   }
 
   /**
@@ -348,12 +385,15 @@
       undo.className = "tts-toast-undo";
       undo.textContent = "Undo";
       undo.dataset.batchId = result.undoBatchId;
+      // Disabled while a cleanup action runs (painted by paintCleanup): the undo's redraw
+      // would clear that action's pendingAction early.
+      undo.disabled = pendingAction !== null;
       let undoSent = false;
       undo.addEventListener("click", (e) => {
         e.stopPropagation();
         e.preventDefault();
         undo.blur();
-        if (undoSent) return;
+        if (undoSent || pendingAction) return;
         undoSent = true;
         hideToast(toast);
         requestUndo(undo.dataset.batchId);
@@ -416,6 +456,11 @@
   }
 
   function requestSort() {
+    // Its redraw would clear pendingAction while that action is still running.
+    if (pendingAction) {
+      LOG("sort: refused —", pendingAction, "is still running");
+      return;
+    }
     LOG("requesting tab sort");
     try {
       chrome.runtime.sendMessage({ action: "sort-tabs" });
@@ -893,11 +938,13 @@
         return;
       }
       // Nothing typed may reach the page behind (its own shortcuts, a held T
-      // repeating). Browser chords pass, except on tidy-up's own letters.
+      // repeating), nor Tab / arrows / paging keys (focus leaving the overlay, the page
+      // scrolling). Browser chords pass, except on tidy-up's own letters.
       // Autofill can send a keydown without a key.
       const typed = typeof e.key === "string" && e.key.length === 1;
       const ownLetter = typed && TIDY_LETTERS.indexOf(e.key.toLowerCase()) !== -1;
-      if (ownLetter || (typed && !e.ctrlKey && !e.altKey && !e.metaKey)) {
+      const bare = !e.ctrlKey && !e.altKey && !e.metaKey;
+      if (ownLetter || (bare && (typed || TIDY_NAV_KEYS.indexOf(e.key) !== -1))) {
         e.preventDefault();
         e.stopPropagation();
       }
@@ -955,8 +1002,9 @@
       return;
     }
     // Reached only when the configured keys above did not claim the event, so a user
-    // who rebinds navigation to S keeps that binding.
-    if (isBareKey(e, ["s", "S"])) {
+    // who rebinds navigation to S keeps that binding. letterTaken says the same for the
+    // legend, and also covers what matchKey lets past (a held Shift on T, say).
+    if (!letterTaken("s") && isBareKey(e, ["s", "S"])) {
       if (e.repeat) return;
       e.preventDefault();
       e.stopPropagation();
@@ -965,7 +1013,7 @@
     }
     // Same rule as S: a configured binding on Z was matched above and wins. Swallowed
     // even with nothing to sleep, so it never reaches the page (Gmail's undo, say).
-    if (isBareKey(e, ["z", "Z"])) {
+    if (!letterTaken("z") && isBareKey(e, ["z", "Z"])) {
       e.preventDefault();
       e.stopPropagation();
       if (e.repeat) return;
@@ -973,7 +1021,7 @@
       return;
     }
     // Same shape as Z: a configured binding on D wins, and D is swallowed either way.
-    if (isBareKey(e, ["d", "D"])) {
+    if (!letterTaken("d") && isBareKey(e, ["d", "D"])) {
       e.preventDefault();
       e.stopPropagation();
       if (e.repeat) return;
@@ -983,7 +1031,7 @@
     // Same shape as Z and D. Refused while a cleanup action is out, but still swallowed.
     // Forgives the armed chord's Shift (Alt+Shift+Q, say): entering tidy-up only
     // disarms, so a held Shift cannot make it do anything the user did not mean.
-    if (isBareKey(e, ["t", "T"], true)) {
+    if (!letterTaken("t") && isBareKey(e, ["t", "T"], true)) {
       e.preventDefault();
       e.stopPropagation();
       if (e.repeat) return;
