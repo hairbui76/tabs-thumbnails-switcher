@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.13.0](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.12.3...v1.13.0) (2026-10-17)
+
+
+### Features
+
+* close duplicate tabs with undo ([0904573](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/09045730ad9273e9e03080e504826f6991e1893e))
+* keyboard tidy-up mode in the switcher ([95db4ed](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/95db4edb73e127db6bd20804a55917f8b1a1d3dd))
+* pure tab selection rules for sleep, dedupe and tidy-up ([a04adf9](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/a04adf9c3d07113837ca34e2ae1bc1082b176e5e))
+* put background tabs to sleep from the switcher ([e1747ae](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/e1747aedf2e0cc615f6c23c0a24f123476fc17f2))
+* richer switcher payload, tab-id replacement, memory read ([44c0b6c](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/44c0b6c47ef983593e3af5a46e6fca6d88aa5f0c))
+* tidy-up state machine ([8f304ee](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/8f304eeb870eb70df604a76fe5dda23e6d9f8741))
+
+
+### Bug Fixes
+
+* keep tidy-up keys in the overlay, guard closes, honour rebound letters ([540c600](https://github.com/hairbui76/tabs-thumbnails-switcher/commit/540c600e653f8102534e5528319dd3148ad7ec77))
+
 ## [1.12.3](https://github.com/hairbui76/tabs-thumbnails-switcher/compare/v1.12.2...v1.12.3) (2026-09-04)
 
 
