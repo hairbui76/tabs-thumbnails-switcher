@@ -111,20 +111,27 @@ test("undo from the summary brings back the last card", () => {
 test("skip advances without touching stats", () => {
   let s = T.tidyInit([1, 2]);
   s = T.tidyApply(s, { type: "skip" });
-  assert.equal(s.pos, 1);
   assert.equal(T.tidyCurrent(s), 2);
   assert.deepEqual(s.stats, { closed: 0, kept: 0, slept: 0 });
+  // The vanished tab leaves the queue, so "N left" counts only real tabs.
+  assert.deepEqual(s.queue, [2]);
+  assert.equal(s.pos, 0);
+  assert.equal(s.queue.length - s.pos, 1);
 });
 
 test("skip is not recorded: undo after skip returns to the last real decision", () => {
   let s = T.tidyInit([1, 2, 3]);
   s = T.tidyApply(s, { type: "keep" });
   s = T.tidyApply(s, { type: "skip" });
-  assert.equal(s.pos, 2);
+  assert.equal(s.pos, 1);
+  assert.equal(T.tidyCurrent(s), 3);
   s = T.tidyApply(s, { type: "undo" });
   assert.equal(s.pos, 0);
   assert.equal(s.stats.kept, 0);
   assert.equal(T.tidyCurrent(s), 1);
+  // Keeping again walks 1 -> 3: the vanished 2 is never shown again.
+  s = T.tidyApply(s, { type: "keep" });
+  assert.equal(T.tidyCurrent(s), 3);
 });
 
 test("undo after slept with newId decrements slept and returns to the replaced id", () => {
@@ -188,4 +195,55 @@ test("actions after the end of the queue leave the state unchanged", () => {
     assert.equal(T.tidyApply(s, a), s);
   }
   assert.deepEqual(s.stats, { closed: 0, kept: 1, slept: 0 });
+});
+
+test("forget drops the top history entry and its dead tab, keeping stats", () => {
+  let s = T.tidyInit([1, 2, 3]);
+  s = T.tidyApply(s, { type: "keep" });
+  s = T.tidyApply(s, { type: "closed", batchId: "gone" });
+  deepFreeze(s);
+  const f = T.tidyApply(s, { type: "forget" });
+  assert.deepEqual(f.queue, [1, 3]);
+  assert.equal(f.pos, 1);
+  assert.equal(T.tidyCurrent(f), 3);
+  assert.deepEqual(f.stats, { closed: 1, kept: 1, slept: 0 });
+  assert.deepEqual(f.history, [{ type: "keep", pos: 0 }]);
+  assert.equal(T.tidyLastUndoBatch(f), null);
+  // The next undo reaches the step before the forgotten one.
+  const u = T.tidyApply(f, { type: "undo" });
+  assert.equal(u.pos, 0);
+  assert.deepEqual(u.stats, { closed: 1, kept: 0, slept: 0 });
+});
+
+test("forget: undoing past a lost close never shows the closed tab again (review repro)", () => {
+  const A = 1, B = 2, C = 3;
+  let s = T.tidyInit([A, B, C]);
+  s = T.tidyApply(s, { type: "keep" }); // K A
+  s = T.tidyApply(s, { type: "closed", batchId: "lost" }); // X B, its batch later lost
+  s = T.tidyApply(s, { type: "forget" }); // U -> "Couldn't reopen"
+  assert.equal(T.tidyCurrent(s), C);
+  s = T.tidyApply(s, { type: "undo" }); // U -> back to A
+  assert.equal(T.tidyCurrent(s), A);
+  s = T.tidyApply(s, { type: "keep" }); // K A
+  assert.equal(T.tidyCurrent(s), C, "B is not offered again");
+  s = T.tidyApply(s, { type: "keep" }); // K C
+  assert.equal(T.tidyCurrent(s), null);
+  assert.deepEqual(s.stats, { closed: 1, kept: 2, slept: 0 });
+  assert.equal(T.tidySummaryText(s.stats), "Closed 1 · kept 2 · slept 0");
+});
+
+test("forget works on the summary and is a no-op with no history", () => {
+  let s = T.tidyApply(T.tidyInit([1]), { type: "closed", batchId: "b" });
+  assert.equal(T.tidyCurrent(s), null);
+  const f = T.tidyApply(s, { type: "forget" });
+  assert.deepEqual(f.history, []);
+  assert.deepEqual(f.queue, []);
+  assert.equal(T.tidyCurrent(f), null);
+  const fresh = T.tidyInit([1]);
+  assert.equal(T.tidyApply(fresh, { type: "forget" }), fresh);
+});
+
+test("tidySummaryText formats the end-of-queue line", () => {
+  assert.equal(T.tidySummaryText({ closed: 12, kept: 20, slept: 5 }), "Closed 12 · kept 20 · slept 5");
+  assert.equal(T.tidySummaryText(T.tidyInit([]).stats), "Closed 0 · kept 0 · slept 0");
 });

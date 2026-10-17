@@ -246,6 +246,12 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
   LOG("tab replaced:", removedTabId, "->", addedTabId);
   if (overlayTabId === removedTabId) overlayTabId = addedTabId;
+  // The open overlay (and tidy-up in it) holds tab ids; tell it before they go stale.
+  if (overlayTabId != null) {
+    chrome.tabs
+      .sendMessage(overlayTabId, { action: "tab-replaced", oldId: removedTabId, newId: addedTabId })
+      .catch(() => {});
+  }
   await ready();
   // Drop any entry the new id already has (onCreated may have pushed it) so it is
   // not listed twice.
@@ -485,10 +491,15 @@ const SLEEP_SETTLE_MS = 1500;
  * give a discarded tab a new id; `replaced` maps old id -> new id for those.
  * `freedBytes` is the change in free memory, or null when either reading failed or
  * nothing slept (a figure then would be pure noise from other apps).
+ *
+ * `opts.measure === false` skips the memory readings and the settle wait (freedBytes is
+ * then null): tidy-up sleeps one tab per key press and shows no figure, so it must not
+ * stall SLEEP_SETTLE_MS each time.
  */
-async function sleepTabs(tabIds) {
+async function sleepTabs(tabIds, opts) {
   const ids = tabIds || [];
-  const before = await readMemory();
+  const measure = !(opts && opts.measure === false);
+  const before = measure ? await readMemory() : null;
   let slept = 0;
   let failed = 0;
   const replaced = {};
@@ -509,7 +520,7 @@ async function sleepTabs(tabIds) {
     slept++;
     if (tab.id !== id) replaced[id] = tab.id;
   });
-  if (slept === 0) return { slept, failed, freedBytes: null, replaced };
+  if (slept === 0 || !measure) return { slept, failed, freedBytes: null, replaced };
 
   await new Promise((r) => setTimeout(r, SLEEP_SETTLE_MS));
   const after = await readMemory();
@@ -820,6 +831,57 @@ async function undoClose(batchId) {
   return { restored, tabIds };
 }
 
+/**
+ * The tab tidy-up asked to act on, or an answer for the page when it cannot be acted
+ * on: { ok:false, gone:true } when it no longer exists (tidy-up then skips it), and
+ * { ok:false } for the active tab or a pinned tab, which are never closed or put to
+ * sleep whatever the page sent.
+ */
+async function tidyTarget(tabId, label) {
+  if (typeof tabId !== "number") return { answer: { ok: false, error: "no tab id" } };
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab) {
+    LOG(label + ": tab", tabId, "is gone");
+    return { answer: { ok: false, gone: true } };
+  }
+  if (tab.active || tab.pinned) {
+    LOG(label + ": refused for tab", tabId, tab.active ? "(active)" : "(pinned)");
+    return { answer: { ok: false, error: "the active tab and pinned tabs are left alone" } };
+  }
+  return { tab };
+}
+
+/** After an action did nothing: was that because the tab went away meanwhile? */
+async function tidyFailure(tabId, error) {
+  const still = await chrome.tabs.get(tabId).catch(() => null);
+  return still ? { ok: false, error } : { ok: false, gone: true };
+}
+
+/** Tidy-up's X: closes one tab, recorded so U can reopen it. Resolves to { ok, batchId }. */
+async function tidyClose(tabId) {
+  const { tab, answer } = await tidyTarget(tabId, "tidy-close");
+  if (!tab) return answer;
+  const { batchId, closed } = await closeTabsRecorded([tab.id]);
+  if (!closed) return tidyFailure(tab.id, "the tab could not be closed");
+  // batchId is null when the undo record could not be stored: closed, but not undoable.
+  return { ok: true, batchId };
+}
+
+/**
+ * Tidy-up's Z: puts one tab to sleep. Resolves to { ok, newId }, newId being the id the
+ * tab has now (Chrome may replace it on discard). No memory reading: one keypress must
+ * not wait for one.
+ */
+async function tidySleep(tabId) {
+  const { tab, answer } = await tidyTarget(tabId, "tidy-sleep");
+  if (!tab) return answer;
+  if (tab.discarded) return { ok: true, newId: tab.id };
+  const r = await sleepTabs([tab.id], { measure: false });
+  if (!r.slept) return tidyFailure(tab.id, "the tab could not be put to sleep");
+  const newId = r.replaced[tab.id] != null ? r.replaced[tab.id] : tab.id;
+  return { ok: true, newId };
+}
+
 async function showSwitcher(opts) {
   const order = (opts && opts.order) || "mru";
   const refreshTabId = (opts && opts.refreshTabId) != null ? opts.refreshTabId : null;
@@ -931,14 +993,14 @@ async function ensureContentScript(tabId) {
     });
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ["debug-helpers.js", "key-gesture.js", "overlay-keys.js", "content.js"],
+      files: ["debug-helpers.js", "key-gesture.js", "overlay-keys.js", "tidy-mode.js", "content.js"],
     });
     return;
   }
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ["debug-helpers.js", "key-gesture.js", "overlay-keys.js"],
+      files: ["debug-helpers.js", "key-gesture.js", "overlay-keys.js", "tidy-mode.js"],
     });
   } catch (e) {
     LOG("optional key-gesture re-inject:", e.message);
@@ -1069,8 +1131,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     void dedupeFromOverlay(sender.tab);
     return;
   }
+  if (message.action === "tidy-close" || message.action === "tidy-sleep") {
+    // Answers the page (tidy-up) directly — exactly once, errors included — and never
+    // redraws it: tidy-up keeps its own card on screen.
+    const label = message.action;
+    const act = label === "tidy-close" ? tidyClose : tidySleep;
+    LOG(label, "requested for tab", message.tabId);
+    Promise.resolve()
+      .then(() => act(message.tabId))
+      .catch((e) => {
+        LOG(label + " failed:", e && e.message);
+        return { ok: false, error: (e && e.message) || String(e) };
+      })
+      .then((r) => {
+        LOG(label, "tab", message.tabId, "->", r);
+        try {
+          sendResponse(r);
+        } catch (e) {
+          LOG(label + ": response failed:", e && e.message);
+        }
+      });
+    return true;
+  }
   if (message.action === "undo-close") {
-    // The only branch that answers: the caller (tidy-up) needs the new tab ids.
+    // Answers too: the caller (tidy-up) needs the new tab ids.
     const refreshTabId = message.refresh && sender && sender.tab ? sender.tab.id : null;
     LOG("undo-close requested for batch", message.batchId);
     undoClose(message.batchId)
@@ -1093,6 +1177,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === "refresh-switcher") {
     // Redraw in place: no armMods/openedByKey, so switch-on-release is not re-armed.
+    if (overlayActionInFlight) {
+      // That action redraws the overlay itself when done; redrawing now would clear
+      // its "Sleeping…" / "Deduping…" early.
+      LOG("refresh-switcher:", overlayActionInFlight, "is running — it redraws when done");
+      return;
+    }
     LOG("refresh-switcher requested from overlay");
     void showSwitcher({ refreshTabId: sender && sender.tab ? sender.tab.id : null });
     return;
