@@ -1,4 +1,4 @@
-importScripts("debug-helpers.js");
+importScripts("debug-helpers.js", "tab-logic.js");
 const LOG = self.__ttsCreateTtsLog("background");
 
 /** Session key for JPEG data URLs; survives MV3 service worker sleep, clears when browser closes. */
@@ -223,6 +223,38 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   void updateTabCountBadge();
 });
 
+/**
+ * Some Chrome versions give a tab a new id when it is discarded (slept). Carry its
+ * MRU position, thumbnail and visit stamp over to the new id so switching to a slept
+ * tab, and quick-switch order, keep working.
+ */
+chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
+  LOG("tab replaced:", removedTabId, "->", addedTabId);
+  if (overlayTabId === removedTabId) overlayTabId = addedTabId;
+  await ready();
+  // Drop any entry the new id already has (onCreated may have pushed it) so it is
+  // not listed twice.
+  if (mruList.includes(removedTabId)) {
+    mruList = replaceTabId(
+      mruList.filter((id) => id !== addedTabId),
+      removedTabId,
+      addedTabId
+    );
+  }
+  const thumbnailMoved = !!thumbnails[removedTabId];
+  if (thumbnailMoved) {
+    thumbnails[addedTabId] = thumbnails[removedTabId];
+    delete thumbnails[removedTabId];
+  }
+  if (lastAccessed[removedTabId]) {
+    lastAccessed[addedTabId] = lastAccessed[removedTabId];
+    delete lastAccessed[removedTabId];
+  }
+  await saveMruList();
+  // Sleeping N tabs can fire N replaces; each persist writes the whole map.
+  if (thumbnailMoved) await persistThumbnails();
+});
+
 chrome.tabs.onCreated.addListener(async (tab) => {
   LOG("tab created:", tab.id);
   await ready();
@@ -409,18 +441,51 @@ async function tabCounts(allTabs, windowId) {
   };
 }
 
+/**
+ * Machine-wide memory as { available, capacity } in bytes, or null when the
+ * system.memory API is missing or fails — callers then show no memory figure.
+ */
+async function readMemory() {
+  try {
+    if (!chrome.system || !chrome.system.memory) {
+      LOG("readMemory: system.memory API unavailable");
+      return null;
+    }
+    const info = await chrome.system.memory.getInfo();
+    return { available: info.availableCapacity, capacity: info.capacity };
+  } catch (e) {
+    LOG("readMemory failed:", e && e.message);
+    return null;
+  }
+}
+
 async function showSwitcher(opts) {
   const order = (opts && opts.order) || "mru";
+  const refreshTabId = (opts && opts.refreshTabId) != null ? opts.refreshTabId : null;
   await ready();
   const { allTabs, activeTab } = await reconcileMruList();
   if (!activeTab) {
     LOG("no active tab found");
     return;
   }
+  // A refresh only redraws the overlay on the tab that asked; if the user has moved
+  // on, drawing it elsewhere would reopen a closed overlay.
+  if (refreshTabId != null && refreshTabId !== activeTab.id) {
+    LOG("refresh: tab", refreshTabId, "is no longer active (", activeTab.id, ") — skipped");
+    return;
+  }
   LOG("active tab:", activeTab.id, activeTab.url);
 
   const windowTabs = allTabs.filter((t) => t.windowId === activeTab.windowId);
   LOG("total tabs in window:", windowTabs.length);
+
+  const plan = duplicatePlan(windowTabs, mruList, activeTab.id);
+  const sleepCount = sleepCandidates(windowTabs, activeTab.id).length;
+  const tidy = tidyQueue(
+    windowTabs,
+    Object.fromEntries(windowTabs.map((t) => [t.id, lastAccessedOf(t)])),
+    activeTab.id
+  );
 
   const tabMap = {};
   for (const tab of windowTabs) {
@@ -431,6 +496,10 @@ async function showSwitcher(opts) {
       favIconUrl: tab.favIconUrl || "",
       thumbnail: thumbnails[tab.id] || null,
       lastAccessed: lastAccessedOf(tab),
+      discarded: !!tab.discarded,
+      pinned: !!tab.pinned,
+      audible: !!tab.audible,
+      dupCount: plan.dupCount[tab.id] || 0,
     };
   }
 
@@ -450,8 +519,13 @@ async function showSwitcher(opts) {
     }
   }
 
-  const counts = await tabCounts(allTabs, activeTab.windowId);
+  const [counts, memory] = await Promise.all([
+    tabCounts(allTabs, activeTab.windowId),
+    readMemory(),
+  ]);
+  const memoryText = memoryLineText(memory);
   LOG("sending", sortedTabs.length, "tabs to overlay, thumbnails cached:", Object.keys(thumbnails).length);
+  LOG("cleanup: sleep", sleepCount, "dedupe", plan.toClose.length, "tidy", tidy.length, "|", memoryText || "no memory info");
 
   try {
     await ensureContentScript(activeTab.id);
@@ -462,9 +536,20 @@ async function showSwitcher(opts) {
       counts,
       armMods: (opts && opts.armMods) || null,
       openedByKey: !!(opts && opts.openedByKey),
+      memory,
+      memoryText,
+      result: (opts && opts.result) || null,
+      sleepCount,
+      dedupeCount: plan.toClose.length,
+      tidyQueue: tidy,
     });
     LOG("show-switcher message sent successfully");
   } catch (e) {
+    if (refreshTabId != null) {
+      // A refresh must never switch tabs; the overlay is simply gone.
+      LOG("refresh: failed to redraw overlay:", e.message);
+      return;
+    }
     LOG("failed to show overlay:", e.message, "— falling back to direct switch");
     await quickSwitchToPreviousMru();
   }
@@ -600,6 +685,12 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.action === "sort-tabs") {
     LOG("sort-tabs requested from overlay");
     void sortWindowTabs().then(() => showSwitcher({ order: "index" }));
+    return;
+  }
+  if (message.action === "refresh-switcher") {
+    // Redraw in place: no armMods/openedByKey, so switch-on-release is not re-armed.
+    LOG("refresh-switcher requested from overlay");
+    void showSwitcher({ refreshTabId: sender && sender.tab ? sender.tab.id : null });
     return;
   }
   if (message.action === "open-options") {

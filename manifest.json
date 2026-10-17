@@ -7,7 +7,9 @@
     "tabs",
     "activeTab",
     "scripting",
-    "storage"
+    "storage",
+    "system.memory",
+    "sessions"
   ],
   "host_permissions": [
     "<all_urls>"
