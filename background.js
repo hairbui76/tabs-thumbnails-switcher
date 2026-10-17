@@ -198,8 +198,23 @@ function captureTab(windowId, tabId) {
   }, 300);
 }
 
+/**
+ * Non-zero while Undo is reopening tabs and handing focus back. sessions.restore
+ * activates each tab it brings back; those are not visits, so they must not reorder the
+ * MRU list, stamp a visit, or capture a thumbnail (which would be the overlay itself).
+ */
+let quietActivations = 0;
+/** Activation events can arrive after the API promise that caused them resolves. */
+const QUIET_ACTIVATION_SETTLE_MS = 300;
+
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   const { tabId, windowId } = activeInfo;
+  // Checked before any await, so the event is judged by when it arrived.
+  if (quietActivations > 0) {
+    LOG("tab activated:", tabId, "window:", windowId, "— by Undo, not tracked");
+    void updateTabCountBadge(windowId);
+    return;
+  }
   LOG("tab activated:", tabId, "window:", windowId);
 
   await ready();
@@ -502,29 +517,48 @@ async function sleepTabs(tabIds) {
   return { slept, failed, freedBytes, replaced };
 }
 
-/** Set while a sleep-tabs request runs, so a double press cannot discard twice. */
-let sleepInFlight = false;
+/**
+ * The overlay cleanup action running now ("sleep-tabs", "dedupe-tabs"), or null. One
+ * at a time: a double press, or Dedupe pressed during a Sleep, is ignored.
+ */
+let overlayActionInFlight = null;
 
 /**
- * The overlay's Sleep button / Z key. Candidates come from the live tabs of the
- * window the overlay is on (never from the list the overlay rendered, which may be
- * stale), then the overlay is redrawn in place with the result toast.
+ * Runs one of the overlay's redraw-with-toast cleanup actions (Sleep, Dedupe). `act`
+ * gets the live tabs of the window the overlay is on (never the list the overlay
+ * rendered, which may be stale) and that window's active tab id, and resolves to the
+ * toast result, or null when there was nothing to do. The overlay is redrawn in place
+ * on the tab that asked whatever happens, since it shows "Sleeping…" / "Deduping…"
+ * until a redraw arrives.
  */
-async function sleepFromOverlay(senderTab) {
-  if (sleepInFlight) {
-    LOG("sleep-tabs: already running — ignored");
+async function runOverlayAction(senderTab, label, act) {
+  if (overlayActionInFlight) {
+    LOG(label + ":", overlayActionInFlight, "is still running — ignored");
     return;
   }
-  sleepInFlight = true;
+  overlayActionInFlight = label;
+  const refreshTabId = senderTab.id;
   try {
     const windowTabs = await chrome.tabs.query({ windowId: senderTab.windowId });
     const active = windowTabs.find((t) => t.active);
-    const ids = sleepCandidates(windowTabs, active ? active.id : senderTab.id);
-    if (!ids.length) {
-      LOG("sleep-tabs: nothing to sleep in window", senderTab.windowId);
-      await showSwitcher({ refreshTabId: senderTab.id });
-      return;
-    }
+    const result = await act(windowTabs, active ? active.id : senderTab.id);
+    if (!result) LOG(label + ": nothing to do in window", senderTab.windowId);
+    await showSwitcher(result ? { result, refreshTabId } : { refreshTabId });
+  } catch (e) {
+    LOG(label + " failed:", e && e.message);
+    await showSwitcher({ refreshTabId }).catch((err) => {
+      LOG(label + ": refresh after failure failed:", err && err.message);
+    });
+  } finally {
+    overlayActionInFlight = null;
+  }
+}
+
+/** The overlay's Sleep button / Z key. */
+function sleepFromOverlay(senderTab) {
+  return runOverlayAction(senderTab, "sleep-tabs", async (windowTabs, activeTabId) => {
+    const ids = sleepCandidates(windowTabs, activeTabId);
+    if (!ids.length) return null;
     LOG("sleep-tabs: sleeping", ids.length, "tabs:", ids);
     const r = await sleepTabs(ids);
     LOG(
@@ -532,16 +566,258 @@ async function sleepFromOverlay(senderTab) {
       "freed", r.freedBytes == null ? "(unknown)" : r.freedBytes + " bytes",
       "replaced", r.replaced
     );
-    await showSwitcher({ result: { text: sleepToastText(r) }, refreshTabId: senderTab.id });
-  } catch (e) {
-    LOG("sleep-tabs failed:", e && e.message);
-    // The overlay shows "Sleeping…" until a redraw arrives; send one regardless.
-    await showSwitcher({ refreshTabId: senderTab.id }).catch((err) => {
-      LOG("sleep-tabs: refresh after failure failed:", err && err.message);
-    });
-  } finally {
-    sleepInFlight = false;
+    return { text: sleepToastText(r) };
+  });
+}
+
+/**
+ * The overlay's Dedupe button / D key: closes the copies duplicatePlan picks, then
+ * redraws with the toast and its Undo.
+ */
+function dedupeFromOverlay(senderTab) {
+  return runOverlayAction(senderTab, "dedupe-tabs", async (windowTabs, activeTabId) => {
+    // Same MRU list showSwitcher ranks with, so the copy kept is the one it promised.
+    await ready();
+    await reconcileMruList();
+    const plan = duplicatePlan(windowTabs, mruList, activeTabId);
+    if (!plan.toClose.length) return null;
+    LOG("dedupe-tabs: closing", plan.toClose.length, "tabs:", plan.toClose);
+    const { batchId, closed } = await closeTabsRecorded(plan.toClose);
+    if (!closed) return null;
+    const result = { text: dedupeToastText(closed) };
+    if (batchId) result.undoBatchId = batchId;
+    return result;
+  });
+}
+
+/**
+ * Session key for the closed-tab batches Undo can bring back. Kept in storage rather
+ * than a variable because MV3 tears the worker down after ~30 s idle, and an Undo
+ * (or a long tidy-up) easily outlives that. Clears when the browser closes.
+ */
+const TTS_UNDO_BATCHES_SESSION_KEY = "ttsUndoBatches";
+/** How many undo batches are kept, newest last; older ones fall off. */
+const UNDO_BATCHES_MAX = 20;
+
+/**
+ * Serializes read-modify-write of the undo batches, so two closes (or a close and an
+ * undo) arriving together cannot overwrite each other's update.
+ */
+let undoStoreChain = Promise.resolve();
+function withUndoStore(fn) {
+  const run = undoStoreChain.then(() => fn());
+  undoStoreChain = run.catch(() => {});
+  return run;
+}
+
+async function loadUndoBatches() {
+  const data = await chrome.storage.session.get(TTS_UNDO_BATCHES_SESSION_KEY);
+  const list = data && data[TTS_UNDO_BATCHES_SESSION_KEY];
+  return Array.isArray(list) ? list : [];
+}
+
+function newUndoBatchId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+/**
+ * Closes the tabs and records them so undoClose can bring them back. Ids that no
+ * longer exist are skipped, and each tab is removed on its own, so one that vanishes
+ * meanwhile cannot fail the rest; exactly the tabs that closed are recorded, in the
+ * order they were closed.
+ *
+ * Returns { batchId, closed }: batchId is null when nothing closed or the record could
+ * not be stored (so no Undo is offered that would find nothing).
+ */
+async function closeTabsRecorded(tabIds) {
+  const ids = [...new Set((tabIds || []).filter((id) => typeof id === "number"))];
+  if (!ids.length) return { batchId: null, closed: 0 };
+
+  const found = await Promise.all(ids.map((id) => chrome.tabs.get(id).catch(() => null)));
+  const live = found.filter(Boolean);
+  if (live.length < ids.length) {
+    LOG("close: skipping vanished tabs:", ids.filter((id) => !live.some((t) => t.id === id)));
   }
+  if (!live.length) return { batchId: null, closed: 0 };
+
+  const results = await Promise.allSettled(live.map((t) => chrome.tabs.remove(t.id)));
+  const closedTabs = live.filter((t, i) => {
+    if (results[i].status === "fulfilled") return true;
+    LOG("close: tab", t.id, "failed:", results[i].reason && results[i].reason.message);
+    return false;
+  });
+  if (!closedTabs.length) return { batchId: null, closed: 0 };
+
+  const records = closedTabs.map((t) => ({
+    url: t.url || t.pendingUrl || "",
+    index: t.index,
+    windowId: t.windowId,
+    pinned: !!t.pinned,
+  }));
+  let batchId = newUndoBatchId();
+  try {
+    await withUndoStore(async () => {
+      const batches = await loadUndoBatches();
+      batches.push({ id: batchId, records });
+      await chrome.storage.session.set({
+        [TTS_UNDO_BATCHES_SESSION_KEY]: batches.slice(-UNDO_BATCHES_MAX),
+      });
+    });
+  } catch (e) {
+    // The tabs are closed either way; without a stored record there is nothing to undo.
+    LOG("close: storing undo batch failed:", e && e.message);
+    batchId = null;
+  }
+  LOG("closed", closedTabs.length, "tabs, undo batch", batchId);
+  return { batchId, closed: closedTabs.length };
+}
+
+/**
+ * Reopens a record from its recently-closed session, which keeps the back/forward
+ * history. Resolves to { ok, tabId }: ok false when the restore failed (the caller then
+ * reopens it by URL); tabId null when Chrome restored it without saying as which tab.
+ */
+async function restoreClosedSession(sessionId) {
+  try {
+    const session = await chrome.sessions.restore(sessionId);
+    const tabId = session && session.tab && session.tab.id != null ? session.tab.id : null;
+    LOG("undo: restored session", sessionId, "as tab", tabId == null ? "(unknown)" : tabId);
+    return { ok: true, tabId };
+  } catch (e) {
+    LOG("undo: restore of session", sessionId, "failed:", e && e.message);
+    return { ok: false, tabId: null };
+  }
+}
+
+/**
+ * Reopens a record as a fresh background tab at its old place — or anywhere, if that
+ * window is gone. Resolves to the new tab id, or null. A record without a URL stays
+ * closed rather than coming back as a blank tab.
+ */
+async function reopenClosedByUrl(rec) {
+  if (!rec.url) {
+    LOG("undo: record has no URL — not reopened");
+    return null;
+  }
+  const props = { url: rec.url, active: false };
+  if (rec.pinned) props.pinned = true;
+  const placed = Object.assign({}, props);
+  if (typeof rec.windowId === "number") placed.windowId = rec.windowId;
+  if (typeof rec.index === "number") placed.index = rec.index;
+  try {
+    const tab = await chrome.tabs.create(placed);
+    LOG("undo: reopened", rec.url, "as tab", tab.id);
+    return tab.id;
+  } catch (e) {
+    LOG("undo: create in window", rec.windowId, "failed:", e && e.message, "— opening it anywhere");
+  }
+  try {
+    const tab = await chrome.tabs.create(props);
+    LOG("undo: reopened", rec.url, "as tab", tab.id);
+    return tab.id;
+  } catch (e) {
+    LOG("undo: could not reopen", rec.url, ":", e && e.message);
+    return null;
+  }
+}
+
+/**
+ * Brings back a batch closed by closeTabsRecorded. The batch is removed from storage
+ * before anything reopens, so a second Undo of it is a no-op.
+ *
+ * Order matters for where tabs land. The records are in closing order and each session
+ * restores at the index it was closed from, so sessions are restored newest-closed
+ * first (exact LIFO): every tab then goes back into the strip as it was when it left.
+ * Matching runs over the same reversed list, so the newest session of a URL goes to the
+ * last-closed copy. Records with no session (or a failed restore) reopen afterwards by
+ * URL, in ascending index order.
+ *
+ * sessions.restore activates the tab it brings back. Activations during the restore are
+ * not tracked (see quietActivations), and afterwards each affected window's previously
+ * active tab is made active again — but only where the active tab is now one we
+ * restored, so a switch the user made meanwhile is left alone.
+ *
+ * Returns { restored, tabIds }: tabIds[i] is the new id of records[i], or null if it did
+ * not come back (or came back as an unknown tab, which still counts as restored).
+ */
+async function undoClose(batchId) {
+  const batch = await withUndoStore(async () => {
+    const batches = await loadUndoBatches();
+    const i = batches.findIndex((b) => b && b.id === batchId);
+    if (i === -1) return null;
+    const [taken] = batches.splice(i, 1);
+    await chrome.storage.session.set({ [TTS_UNDO_BATCHES_SESSION_KEY]: batches });
+    return taken;
+  });
+  if (!batch) {
+    LOG("undo: batch", batchId, "not found (already undone or expired)");
+    return { restored: 0, tabIds: [] };
+  }
+  const records = Array.isArray(batch.records) ? batch.records : [];
+
+  let recentlyClosed = [];
+  try {
+    recentlyClosed = await chrome.sessions.getRecentlyClosed();
+  } catch (e) {
+    LOG("undo: getRecentlyClosed failed:", e && e.message);
+  }
+  // Positions into records, newest-closed first.
+  const lifo = records.map((_, i) => i).reverse();
+  const sessionIds = matchClosedSessions(lifo.map((i) => records[i]), recentlyClosed);
+
+  const windowIds = [...new Set(records.map((r) => r.windowId).filter((id) => typeof id === "number"))];
+  const activeBefore = [];
+  for (const windowId of windowIds) {
+    try {
+      const [active] = await chrome.tabs.query({ active: true, windowId });
+      if (active) activeBefore.push({ windowId, tabId: active.id });
+    } catch (e) {
+      LOG("undo: reading the active tab of window", windowId, "failed:", e && e.message);
+    }
+  }
+
+  const tabIds = records.map(() => null);
+  let restored = 0;
+  quietActivations++;
+  try {
+    const byUrl = [];
+    for (let k = 0; k < lifo.length; k++) {
+      const i = lifo[k];
+      if (!sessionIds[k]) {
+        byUrl.push(i);
+        continue;
+      }
+      const r = await restoreClosedSession(sessionIds[k]);
+      if (!r.ok) {
+        byUrl.push(i);
+        continue;
+      }
+      tabIds[i] = r.tabId;
+      restored++;
+    }
+    byUrl.sort((a, b) => (records[a].index ?? Infinity) - (records[b].index ?? Infinity) || a - b);
+    for (const i of byUrl) {
+      tabIds[i] = await reopenClosedByUrl(records[i]);
+      if (tabIds[i] != null) restored++;
+    }
+
+    const ours = new Set(tabIds.filter((id) => id != null));
+    for (const { windowId, tabId } of activeBefore) {
+      try {
+        const [active] = await chrome.tabs.query({ active: true, windowId });
+        if (!active || active.id === tabId || !ours.has(active.id)) continue;
+        await chrome.tabs.update(tabId, { active: true });
+      } catch (e) {
+        LOG("undo: handing focus back to tab", tabId, "failed:", e && e.message);
+      }
+    }
+  } finally {
+    setTimeout(() => {
+      quietActivations--;
+    }, QUIET_ACTIVATION_SETTLE_MS);
+  }
+  LOG("undo: batch", batchId, "restored", restored, "of", records.length, "->", tabIds);
+  return { restored, tabIds };
 }
 
 async function showSwitcher(opts) {
@@ -749,7 +1025,7 @@ async function advanceOrOpen() {
   await showSwitcher({ armMods, openedByKey: true });
 }
 
-chrome.runtime.onMessage.addListener((message, sender) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "overlay-opened") {
     overlayTabId = sender && sender.tab ? sender.tab.id : null;
     LOG("overlay open on tab", overlayTabId);
@@ -783,6 +1059,37 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     LOG("sleep-tabs requested from overlay on tab", sender.tab.id);
     void sleepFromOverlay(sender.tab);
     return;
+  }
+  if (message.action === "dedupe-tabs") {
+    if (!sender || !sender.tab) {
+      LOG("dedupe-tabs: no sender tab — ignored");
+      return;
+    }
+    LOG("dedupe-tabs requested from overlay on tab", sender.tab.id);
+    void dedupeFromOverlay(sender.tab);
+    return;
+  }
+  if (message.action === "undo-close") {
+    // The only branch that answers: the caller (tidy-up) needs the new tab ids.
+    const refreshTabId = message.refresh && sender && sender.tab ? sender.tab.id : null;
+    LOG("undo-close requested for batch", message.batchId);
+    undoClose(message.batchId)
+      .catch((e) => {
+        LOG("undo-close failed:", e && e.message);
+        return { restored: 0, tabIds: [], error: (e && e.message) || String(e) };
+      })
+      .then((r) => {
+        try {
+          sendResponse(r);
+        } catch (e) {
+          LOG("undo-close: response failed:", e && e.message);
+        }
+        if (refreshTabId != null) return showSwitcher({ refreshTabId });
+      })
+      .catch((e) => {
+        LOG("undo-close: refresh failed:", e && e.message);
+      });
+    return true;
   }
   if (message.action === "refresh-switcher") {
     // Redraw in place: no armMods/openedByKey, so switch-on-release is not re-armed.

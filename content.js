@@ -33,6 +33,8 @@
     "Sort tabs — the 10 most recently visited first, then grouped by site, title, visit time. Also reorders the real Chrome tabs.";
   const SLEEP_EXCLUDED = "The current tab, pinned tabs and tabs playing sound stay awake.";
   const ASLEEP_TITLE = "Asleep — reloads when you open it";
+  const DEDUPE_RULE =
+    "Copies of a page (ignoring #anchors) in this window. The current tab, else a pinned one, else the most recently used copy stays open.";
   /** How long a result toast stays up. */
   const TOAST_MS = 8000;
 
@@ -42,10 +44,14 @@
   let tabCounts = null;
   /** Cleanup figures from the latest show-switcher payload, precomputed by the worker. */
   let sleepCount = 0;
+  let dedupeCount = 0;
   let memoryText = "";
   let toastTimer = null;
-  /** A sleep-tabs request is out; cleared by the redraw that answers it. */
-  let sleepPending = false;
+  /**
+   * The cleanup action whose request is out — null, "sleep" or "dedupe". One at a
+   * time; cleared by the redraw that answers it.
+   */
+  let pendingAction = null;
   var overlayKeyState = OK.merge(null);
 
   function pullOverlayKeys() {
@@ -84,6 +90,12 @@
    * failed the gesture silently did nothing at all.
    */
   var openedByKey = false;
+  /**
+   * Set by a cleanup action (Z, D or their buttons): stay disarmed until every
+   * modifier is up, so the keyup of a Ctrl+Z cannot re-arm on the still-held Ctrl and
+   * have its release switch to a tab that is being put to sleep or closed.
+   */
+  var disarmedUntilRelease = false;
 
   function readMods(e) {
     return { ctrl: !!e.ctrlKey, alt: !!e.altKey, shift: !!e.shiftKey, meta: !!e.metaKey };
@@ -112,9 +124,8 @@
    * Observed keyboard state is kept as a fallback for the in-page paths.
    */
   function armFrom(mods) {
-    // While a sleep runs, stay disarmed: the Z keyup of a Ctrl+Z would otherwise re-arm
-    // on the still-held Ctrl and its release would switch to a tab being put to sleep.
-    if (!overlayKeyState.commitOnRelease || armedMods || sleepPending) return;
+    // Stay disarmed while a cleanup action runs, and after one until the keys are let go.
+    if (!overlayKeyState.commitOnRelease || armedMods || pendingAction || disarmedUntilRelease) return;
     var arm = armableFrom(mods || heldMods);
     if (!arm) return;
     armedMods = arm;
@@ -224,26 +235,44 @@
   /** Takes the cleanup figures off a show-switcher payload into module state. */
   function applyPayload(message) {
     sleepCount = message.sleepCount || 0;
+    dedupeCount = message.dedupeCount || 0;
     memoryText = message.memoryText || "";
-    sleepPending = false;
+    pendingAction = null;
   }
 
-  /** Fills the header's memory line and the Sleep N button from module state. */
+  /** Fills the header's memory line and the Sleep N / Dedupe N buttons from module state. */
   function paintCleanup(overlay) {
     const mem = overlay.querySelector(".tts-header-memory");
     if (mem) {
       mem.textContent = memoryText;
       mem.hidden = !memoryText;
     }
+    // While one action runs the other button is disabled too: one cleanup at a time.
+    const busy = "Wait for the current cleanup to finish.";
     const sleep = overlay.querySelector(".tts-header-sleep");
     if (sleep) {
-      sleep.textContent = sleepPending ? "Sleeping…" : "Sleep " + sleepCount;
-      sleep.disabled = sleepPending || sleepCount === 0;
-      sleep.title = sleepPending
-        ? "Putting tabs to sleep…"
-        : sleepCount === 0
-          ? "Nothing to put to sleep — the other tabs are asleep already or must stay awake. " + SLEEP_EXCLUDED
-          : "Put " + plural(sleepCount, "background tab") + " to sleep to free memory (Z). They reload when you open them. " + SLEEP_EXCLUDED;
+      sleep.textContent = pendingAction === "sleep" ? "Sleeping…" : "Sleep " + sleepCount;
+      sleep.disabled = pendingAction !== null || sleepCount === 0;
+      sleep.title =
+        pendingAction === "sleep"
+          ? "Putting tabs to sleep…"
+          : pendingAction
+            ? busy
+            : sleepCount === 0
+              ? "Nothing to put to sleep — the other tabs are asleep already or must stay awake. " + SLEEP_EXCLUDED
+              : "Put " + plural(sleepCount, "background tab") + " to sleep to free memory (Z). They reload when you open them. " + SLEEP_EXCLUDED;
+    }
+    const dedupe = overlay.querySelector(".tts-header-dedupe");
+    if (dedupe) {
+      dedupe.textContent = pendingAction === "dedupe" ? "Deduping…" : "Dedupe " + dedupeCount;
+      dedupe.hidden = pendingAction !== "dedupe" && dedupeCount === 0;
+      dedupe.disabled = pendingAction !== null;
+      dedupe.title =
+        pendingAction === "dedupe"
+          ? "Closing duplicate tabs…"
+          : pendingAction
+            ? busy
+            : "Close " + plural(dedupeCount, "duplicate tab") + " (D). Undo brings them back. " + DEDUPE_RULE;
     }
   }
 
@@ -257,14 +286,15 @@
     hint.innerHTML =
       OK.hint(overlayKeyState) +
       ' &nbsp; <span class="tts-key">S</span> sort tabs' +
-      ' &nbsp; <span class="tts-key">Z</span> sleep';
+      ' &nbsp; <span class="tts-key">Z</span> sleep' +
+      (dedupeCount > 0 ? ' &nbsp; <span class="tts-key">D</span> dedupe' : "");
   }
 
   /**
    * A result line at the bottom of the switcher (after Sleep, say), floating just above
-   * the key legend. Replaces any toast already up and hides itself after TOAST_MS. The
-   * Undo button is rendered when the result carries an undo batch; its click handler is
-   * wired in a later step.
+   * the key legend. Replaces any toast already up and hides itself after TOAST_MS. When
+   * the result carries an undo batch (after Dedupe) it gets an Undo button, which hides
+   * the toast at once; the worker's redraw then brings the reopened tabs into the list.
    */
   function showToast(overlay, result) {
     if (!overlay || !result || !result.text) return;
@@ -290,6 +320,16 @@
       undo.className = "tts-toast-undo";
       undo.textContent = "Undo";
       undo.dataset.batchId = result.undoBatchId;
+      let undoSent = false;
+      undo.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        undo.blur();
+        if (undoSent) return;
+        undoSent = true;
+        hideToast(toast);
+        requestUndo(undo.dataset.batchId);
+      });
       toast.appendChild(undo);
     }
     anchor.appendChild(toast);
@@ -298,6 +338,30 @@
       toast.remove();
     }, TOAST_MS);
     LOG("toast:", result.text, result.undoBatchId ? "(undo " + result.undoBatchId + ")" : "");
+  }
+
+  /** Takes a toast down now; its timer goes too unless a newer toast already owns it. */
+  function hideToast(toast) {
+    if (!toast.isConnected) return;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = null;
+    toast.remove();
+  }
+
+  /** Reopens a closed batch; the worker answers with a redraw of this overlay. */
+  function requestUndo(batchId) {
+    LOG("requesting undo of batch", batchId);
+    try {
+      chrome.runtime.sendMessage({ action: "undo-close", batchId: batchId, refresh: true }, (res) => {
+        if (chrome.runtime.lastError) {
+          LOG("undo-close failed:", chrome.runtime.lastError.message);
+          return;
+        }
+        LOG("undo-close restored", res && res.restored, res && res.error ? "error: " + res.error : "");
+      });
+    } catch (e) {
+      LOG("undo request failed", e);
+    }
   }
 
   function tellWorker(action) {
@@ -325,25 +389,38 @@
     }
   }
 
-  /** The worker recomputes the candidates from live tabs; sleepCount only gates the request. */
-  function requestSleep() {
-    if (sleepPending) {
-      LOG("sleep: already running");
+  /** The redraw-with-toast cleanup actions, by name: worker message and current count. */
+  const CLEANUP_ACTIONS = {
+    sleep: { message: "sleep-tabs", count: () => sleepCount },
+    dedupe: { message: "dedupe-tabs", count: () => dedupeCount },
+  };
+
+  /**
+   * Asks the worker for a cleanup action (Sleep, Dedupe). The worker recomputes what to
+   * do from live tabs; the count only gates the request. Refused while another action
+   * is out.
+   */
+  function requestCleanup(kind) {
+    const action = CLEANUP_ACTIONS[kind];
+    if (pendingAction) {
+      LOG(kind + ": refused —", pendingAction, "is still running");
       return;
     }
-    if (sleepCount === 0) {
-      LOG("sleep: nothing to put to sleep");
+    const count = action.count();
+    if (count === 0) {
+      LOG(kind + ": nothing to do");
       return;
     }
-    // Ctrl+Z with switch-on-release armed would otherwise switch to — and reload — a
-    // tab that is being put to sleep the moment Ctrl goes up.
+    // With switch-on-release armed, letting go of Ctrl after Ctrl+Z / Ctrl+D would
+    // switch to — and reload — a tab that is being put to sleep or closed.
     armedMods = null;
     openedByKey = false;
-    sleepPending = true;
+    disarmedUntilRelease = true;
+    pendingAction = kind;
     const overlay = findOverlay();
     if (overlay) paintCleanup(overlay);
-    LOG("requesting sleep of", sleepCount, "tabs (release-to-switch disarmed)");
-    tellWorker("sleep-tabs");
+    LOG("requesting", kind, "of", count, "tabs (release-to-switch disarmed)");
+    tellWorker(action.message);
   }
 
   function renderList(list) {
@@ -380,7 +457,18 @@
         asleep.textContent = "💤";
         title.appendChild(asleep);
       }
-      title.appendChild(document.createTextNode(tab.title));
+      // Own element so a long title ellipsizes while the badge after it stays in view.
+      const titleText = document.createElement("span");
+      titleText.className = "tts-title-text";
+      titleText.textContent = tab.title;
+      title.appendChild(titleText);
+      if (tab.dupCount > 1) {
+        const dup = document.createElement("span");
+        dup.className = "tts-dup";
+        dup.title = tab.dupCount + " tabs open on this page";
+        dup.textContent = "×" + tab.dupCount;
+        title.appendChild(dup);
+      }
       textBlock.appendChild(title);
 
       const domain = document.createElement("div");
@@ -554,7 +642,15 @@
     actions.className = "tts-header-actions";
 
     // Label, count and disabled state are painted by paintCleanup.
-    actions.appendChild(buildBareHeaderButton("tts-header-btn tts-header-sleep", requestSleep));
+    actions.appendChild(
+      buildBareHeaderButton("tts-header-btn tts-header-sleep", () => requestCleanup("sleep"))
+    );
+    // Shown only while there is something to dedupe; painted by paintCleanup.
+    const dedupeBtn = buildBareHeaderButton("tts-header-btn tts-header-dedupe", () =>
+      requestCleanup("dedupe")
+    );
+    dedupeBtn.hidden = true;
+    actions.appendChild(dedupeBtn);
 
     actions.appendChild(
       buildHeaderButton(
@@ -711,7 +807,15 @@
       e.preventDefault();
       e.stopPropagation();
       if (e.repeat) return;
-      requestSleep();
+      requestCleanup("sleep");
+      return;
+    }
+    // Same shape as Z: a configured binding on D wins, and D is swallowed either way.
+    if (isBareKey(e, ["d", "D"])) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat) return;
+      requestCleanup("dedupe");
       return;
     }
   }
@@ -723,6 +827,10 @@
    */
   function handleKeyUp(e) {
     if (!findOverlay()) return;
+    if (disarmedUntilRelease && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      disarmedUntilRelease = false;
+      LOG("all modifiers released after a cleanup action — arming allowed again");
+    }
     if (!overlayKeyState.commitOnRelease) return;
     // Logged for every keyup so an empty log distinguishes "we decided not to commit"
     // from "this page is not receiving key events at all".
@@ -773,8 +881,10 @@
     currentTabId = null;
     tabCounts = null;
     sleepCount = 0;
+    dedupeCount = 0;
     memoryText = "";
-    sleepPending = false;
+    pendingAction = null;
+    disarmedUntilRelease = false;
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = null;
     openedByKey = false;

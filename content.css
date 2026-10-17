@@ -165,8 +165,9 @@
   outline-offset: 1px;
 }
 
-/* Text buttons ("Sleep 12") size to their label instead of the 36px icon square. */
-.tts-header-sleep {
+/* Text buttons ("Sleep 12", "Dedupe 3") size to their label instead of the 36px icon square. */
+.tts-header-sleep,
+.tts-header-dedupe {
   width: auto;
   padding: 0 10px;
   font-family: inherit;
@@ -181,15 +182,38 @@
 
 .tts-header-sleep[disabled],
 .tts-header-sleep[disabled]:hover,
-.tts-header-sleep[disabled]:active {
+.tts-header-sleep[disabled]:active,
+.tts-header-dedupe[disabled],
+.tts-header-dedupe[disabled]:hover,
+.tts-header-dedupe[disabled]:active {
   background: transparent;
   color: rgba(255, 255, 255, 0.2);
   cursor: default;
 }
 
+/* .tts-header-btn sets display, which would otherwise beat the hidden attribute. */
+.tts-header-dedupe[hidden] {
+  display: none;
+}
+
 .tts-asleep {
   margin-right: 5px;
   font-size: 12px;
+  cursor: help;
+}
+
+/* "×4" after the title: how many tabs in this window show the same page. */
+.tts-dup {
+  flex-shrink: 0;
+  margin-left: 6px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  color: #ffd8a8;
+  background: rgba(255, 146, 43, 0.16);
+  border: 1px solid rgba(255, 146, 43, 0.4);
+  border-radius: 4px;
   cursor: help;
 }
 
@@ -229,6 +253,33 @@
 
 .tts-toast button {
   pointer-events: auto;
+}
+
+.tts-toast-undo {
+  flex-shrink: 0;
+  margin: -3px -6px -3px 0;
+  padding: 3px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: normal;
+  text-transform: none;
+  color: #9db1ff;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.tts-toast-undo:hover {
+  background: rgba(99, 131, 255, 0.18);
+  color: #dbe2ff;
+}
+
+.tts-toast-undo:focus-visible {
+  outline: 2px solid rgba(99, 131, 255, 0.7);
+  outline-offset: 1px;
 }
 
 /* Wraps rather than ellipsizes: the toast is the only place the result is reported. */
@@ -332,11 +383,20 @@
   min-width: 0;
 }
 
+/* A row so the title text ellipsizes while 💤, ×N and "current" stay in view. */
 .tts-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
   font-size: 13px;
   font-weight: 500;
   color: #e4e4e7;
   white-space: nowrap;
+  overflow: hidden;
+}
+
+.tts-title-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -455,9 +515,18 @@
 
   .tts-header-sleep[disabled],
   .tts-header-sleep[disabled]:hover,
-  .tts-header-sleep[disabled]:active {
+  .tts-header-sleep[disabled]:active,
+  .tts-header-dedupe[disabled],
+  .tts-header-dedupe[disabled]:hover,
+  .tts-header-dedupe[disabled]:active {
     background: transparent;
     color: rgba(0, 0, 0, 0.22);
+  }
+
+  .tts-dup {
+    color: #a34a00;
+    background: rgba(253, 126, 20, 0.1);
+    border-color: rgba(253, 126, 20, 0.4);
   }
 
   .tts-toast {
@@ -465,6 +534,15 @@
     background: rgba(255, 255, 255, 0.99);
     border-color: rgba(59, 91, 219, 0.35);
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
+  }
+
+  .tts-toast-undo {
+    color: #2f4ac2;
+  }
+
+  .tts-toast-undo:hover {
+    background: rgba(59, 91, 219, 0.12);
+    color: #2338a8;
   }
 
   .tts-card:hover {
