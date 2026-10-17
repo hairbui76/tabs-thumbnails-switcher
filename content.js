@@ -18,13 +18,58 @@
   };
 
   const OVERLAY_ID = "tts-overlay";
+  /**
+   * Marks an overlay that is fading out. It keeps its id (all of content.css hangs off
+   * #tts-overlay, so dropping the id would unstyle it mid-fade), but findOverlay skips
+   * it so nothing arriving during the fade updates a dying overlay.
+   */
+  const CLOSING_CLASS = "tts-closing";
+
+  /** The live overlay, or null — never one that is fading out. */
+  function findOverlay() {
+    return document.querySelector("#" + OVERLAY_ID + ":not(." + CLOSING_CLASS + ")");
+  }
   const SORT_TITLE =
     "Sort tabs — the 10 most recently visited first, then grouped by site, title, visit time. Also reorders the real Chrome tabs.";
+  const SLEEP_EXCLUDED = "The current tab, pinned tabs and tabs playing sound stay awake.";
+  // Shared with tidy-mode.js, which is loaded first (manifest and ensureContentScript);
+  // the literal only covers a page where it somehow is not.
+  const ASLEEP_TITLE =
+    (self.TTS_tidy && self.TTS_tidy.ASLEEP_TITLE) || "Asleep — reloads when you open it";
+  const DEDUPE_RULE =
+    "Copies of a page (ignoring #anchors) in this window. The current tab, else a pinned one, else the most recently used copy stays open.";
+  const TIDY_TITLE =
+    "Go through this window's tabs one at a time, least recently visited first (T): close, keep or put each to sleep.";
+  /** Tidy-up's letters (and T, which opens it): swallowed under tidy-up even with modifiers. */
+  const TIDY_LETTERS = ["x", "k", "z", "u", "t"];
+  /** Non-character keys swallowed under tidy-up when pressed without Ctrl/Alt/Meta (Shift is fine). */
+  const TIDY_NAV_KEYS = ["Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End"];
+  /** How long a result toast stays up. */
+  const TOAST_MS = 8000;
 
   let selectedIndex = 0;
   let tabList = [];
   let currentTabId = null;
   let tabCounts = null;
+  /** Cleanup figures from the latest show-switcher payload, precomputed by the worker. */
+  let sleepCount = 0;
+  let dedupeCount = 0;
+  let memoryText = "";
+  let toastTimer = null;
+  /**
+   * The cleanup action whose request is out — null, "sleep" or "dedupe". One at a
+   * time; cleared by the redraw that answers it. Sort and a toast's Undo wait too,
+   * since any redraw clears it.
+   */
+  let pendingAction = null;
+  /** Tab ids for tidy-up, least recently visited first, from the latest payload. */
+  let tidyQueueIds = [];
+  /**
+   * The mounted tidy-up view ({ handleKey, exit, replaceId, destroy }, from
+   * TTS_tidy.mount) and its element, or null.
+   */
+  let tidy = null;
+  let tidyEl = null;
   var overlayKeyState = OK.merge(null);
 
   function pullOverlayKeys() {
@@ -63,6 +108,12 @@
    * failed the gesture silently did nothing at all.
    */
   var openedByKey = false;
+  /**
+   * Set by a cleanup action (Z, D or their buttons): stay disarmed until every
+   * modifier is up, so the keyup of a Ctrl+Z cannot re-arm on the still-held Ctrl and
+   * have its release switch to a tab that is being put to sleep or closed.
+   */
+  var disarmedUntilRelease = false;
 
   function readMods(e) {
     return { ctrl: !!e.ctrlKey, alt: !!e.altKey, shift: !!e.shiftKey, meta: !!e.metaKey };
@@ -91,7 +142,9 @@
    * Observed keyboard state is kept as a fallback for the in-page paths.
    */
   function armFrom(mods) {
-    if (!overlayKeyState.commitOnRelease || armedMods) return;
+    // Stay disarmed while a cleanup action runs or tidy-up is open, and after either
+    // until the keys are let go.
+    if (!overlayKeyState.commitOnRelease || armedMods || pendingAction || tidy || disarmedUntilRelease) return;
     var arm = armableFrom(mods || heldMods);
     if (!arm) return;
     armedMods = arm;
@@ -198,6 +251,194 @@
     if (windows > 1) el.title += ", " + plural(total, "tab") + " across " + plural(windows, "window");
   }
 
+  /** Takes the cleanup figures off a show-switcher payload into module state. */
+  function applyPayload(message) {
+    sleepCount = message.sleepCount || 0;
+    dedupeCount = message.dedupeCount || 0;
+    memoryText = message.memoryText || "";
+    tidyQueueIds = Array.isArray(message.tidyQueue) ? message.tidyQueue.slice() : [];
+    pendingAction = null;
+  }
+
+  /**
+   * Fills the header's memory line, the Sleep N / Dedupe N / Tidy up buttons and the
+   * disabled state of Sort and of a toast's Undo, from module state.
+   */
+  function paintCleanup(overlay) {
+    const mem = overlay.querySelector(".tts-header-memory");
+    if (mem) {
+      mem.textContent = memoryText;
+      mem.hidden = !memoryText;
+    }
+    // While one action runs the other button is disabled too: one cleanup at a time.
+    const busy = "Wait for the current cleanup to finish.";
+    const tidying = "Leave tidy-up first (Esc).";
+    const sleep = overlay.querySelector(".tts-header-sleep");
+    if (sleep) {
+      sleep.textContent = pendingAction === "sleep" ? "Sleeping…" : "Sleep " + sleepCount;
+      sleep.disabled = pendingAction !== null || !!tidy || sleepCount === 0;
+      sleep.title =
+        pendingAction === "sleep"
+          ? "Putting tabs to sleep…"
+          : pendingAction
+            ? busy
+            : tidy
+              ? tidying
+              : sleepCount === 0
+                ? "Nothing to put to sleep — the other tabs are asleep already or must stay awake. " + SLEEP_EXCLUDED
+                : "Put " + plural(sleepCount, "background tab") + " to sleep to free memory (Z). They reload when you open them. " + SLEEP_EXCLUDED;
+    }
+    const dedupe = overlay.querySelector(".tts-header-dedupe");
+    if (dedupe) {
+      dedupe.textContent = pendingAction === "dedupe" ? "Deduping…" : "Dedupe " + dedupeCount;
+      dedupe.hidden = pendingAction !== "dedupe" && dedupeCount === 0;
+      dedupe.disabled = pendingAction !== null || !!tidy;
+      dedupe.title =
+        pendingAction === "dedupe"
+          ? "Closing duplicate tabs…"
+          : pendingAction
+            ? busy
+            : tidy
+              ? tidying
+              : "Close " + plural(dedupeCount, "duplicate tab") + " (D). Undo brings them back. " + DEDUPE_RULE;
+    }
+    const tidyBtn = overlay.querySelector(".tts-header-tidy");
+    if (tidyBtn) {
+      tidyBtn.disabled = pendingAction !== null || !!tidy;
+      tidyBtn.title = pendingAction ? busy : tidy ? "Tidy-up is open" : TIDY_TITLE;
+    }
+    // Sort and Undo both end in a redraw, which would clear pendingAction while the
+    // action is still running.
+    const sortBtn = overlay.querySelector(".tts-header-sort");
+    if (sortBtn) {
+      sortBtn.disabled = pendingAction !== null;
+      sortBtn.title = pendingAction ? busy : SORT_TITLE;
+    }
+    const undo = overlay.querySelector(".tts-toast-undo");
+    if (undo) {
+      undo.disabled = pendingAction !== null;
+      undo.title = pendingAction ? busy : "";
+    }
+  }
+
+  /**
+   * Whether a configured binding (next, previous, switch, close) is this bare letter
+   * (lower case). That binding wins, so the built-in letter key (S, Z, D, T) is neither
+   * handled nor shown in the legend.
+   */
+  function letterTaken(letter) {
+    const k = overlayKeyState;
+    return [k.next, k.prev, k.switch, k.close].some(
+      (spec) =>
+        spec &&
+        typeof spec.k === "string" &&
+        spec.k.toLowerCase() === letter &&
+        !spec.shift &&
+        !spec.ctrl &&
+        !spec.alt &&
+        !spec.meta
+    );
+  }
+
+  /**
+   * The key legend under the list. Rebuilt on every draw so later cleanup keys can be
+   * shown only when they have something to do, and left out when a binding takes them.
+   */
+  function paintHint(overlay) {
+    const hint = overlay.querySelector(".tts-hint");
+    if (!hint) return;
+    hint.innerHTML =
+      OK.hint(overlayKeyState) +
+      (letterTaken("s") ? "" : ' &nbsp; <span class="tts-key">S</span> sort tabs') +
+      (letterTaken("z") ? "" : ' &nbsp; <span class="tts-key">Z</span> sleep') +
+      (dedupeCount > 0 && !letterTaken("d") ? ' &nbsp; <span class="tts-key">D</span> dedupe' : "") +
+      (letterTaken("t") ? "" : ' &nbsp; <span class="tts-key">T</span> tidy up');
+  }
+
+  /**
+   * A result line at the bottom of the switcher (after Sleep, say), floating just above
+   * the key legend. Replaces any toast already up and hides itself after TOAST_MS. When
+   * the result carries an undo batch (after Dedupe) it gets an Undo button, which hides
+   * the toast at once; the worker's redraw then brings the reopened tabs into the list.
+   */
+  function showToast(overlay, result) {
+    if (!overlay || !result || !result.text) return;
+    const anchor = overlay.querySelector(".tts-toast-anchor");
+    if (!anchor) {
+      LOG("showToast: no toast anchor under the overlay");
+      return;
+    }
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = null;
+    anchor.textContent = "";
+
+    const toast = document.createElement("div");
+    toast.className = "tts-toast";
+    toast.setAttribute("role", "status");
+    const text = document.createElement("span");
+    text.className = "tts-toast-text";
+    text.textContent = result.text;
+    toast.appendChild(text);
+    if (result.undoBatchId) {
+      const undo = document.createElement("button");
+      undo.type = "button";
+      undo.className = "tts-toast-undo";
+      undo.textContent = "Undo";
+      undo.dataset.batchId = result.undoBatchId;
+      // Disabled while a cleanup action runs (painted by paintCleanup): the undo's redraw
+      // would clear that action's pendingAction early.
+      undo.disabled = pendingAction !== null;
+      let undoSent = false;
+      undo.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        undo.blur();
+        if (undoSent || pendingAction) return;
+        undoSent = true;
+        hideToast(toast);
+        requestUndo(undo.dataset.batchId);
+      });
+      toast.appendChild(undo);
+    }
+    anchor.appendChild(toast);
+    toastTimer = setTimeout(() => {
+      toastTimer = null;
+      toast.remove();
+    }, TOAST_MS);
+    LOG("toast:", result.text, result.undoBatchId ? "(undo " + result.undoBatchId + ")" : "");
+  }
+
+  /** Takes a toast down now; its timer goes too unless a newer toast already owns it. */
+  function hideToast(toast) {
+    if (!toast.isConnected) return;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = null;
+    toast.remove();
+  }
+
+  /** Reopens a closed batch; the worker answers with a redraw of this overlay. */
+  function requestUndo(batchId) {
+    LOG("requesting undo of batch", batchId);
+    askWorker({ action: "undo-close", batchId: batchId, refresh: true }).then(
+      (res) => LOG("undo-close restored", res && res.restored, res && res.error ? "error: " + res.error : ""),
+      (e) => LOG("undo-close failed:", e && e.message)
+    );
+  }
+
+  /** A worker request that is answered: resolves to the answer, rejects on a send error. */
+  function askWorker(message) {
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.runtime.sendMessage(message, (res) => {
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+          else resolve(res);
+        });
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
   function tellWorker(action) {
     try {
       chrome.runtime.sendMessage({ action: action });
@@ -215,12 +456,141 @@
   }
 
   function requestSort() {
+    // Its redraw would clear pendingAction while that action is still running.
+    if (pendingAction) {
+      LOG("sort: refused —", pendingAction, "is still running");
+      return;
+    }
     LOG("requesting tab sort");
     try {
       chrome.runtime.sendMessage({ action: "sort-tabs" });
     } catch (e) {
       LOG("sort request failed", e);
     }
+  }
+
+  /** The redraw-with-toast cleanup actions, by name: worker message and current count. */
+  const CLEANUP_ACTIONS = {
+    sleep: { message: "sleep-tabs", count: () => sleepCount },
+    dedupe: { message: "dedupe-tabs", count: () => dedupeCount },
+  };
+
+  /**
+   * Asks the worker for a cleanup action (Sleep, Dedupe). The worker recomputes what to
+   * do from live tabs; the count only gates the request. Refused while another action
+   * is out.
+   */
+  function requestCleanup(kind) {
+    const action = CLEANUP_ACTIONS[kind];
+    if (pendingAction) {
+      LOG(kind + ": refused —", pendingAction, "is still running");
+      return;
+    }
+    if (tidy) {
+      LOG(kind + ": refused — tidy-up is open");
+      return;
+    }
+    const count = action.count();
+    if (count === 0) {
+      LOG(kind + ": nothing to do");
+      return;
+    }
+    // With switch-on-release armed, letting go of Ctrl after Ctrl+Z / Ctrl+D would
+    // switch to — and reload — a tab that is being put to sleep or closed.
+    armedMods = null;
+    openedByKey = false;
+    disarmedUntilRelease = true;
+    pendingAction = kind;
+    const overlay = findOverlay();
+    if (overlay) paintCleanup(overlay);
+    LOG("requesting", kind, "of", count, "tabs (release-to-switch disarmed)");
+    tellWorker(action.message);
+  }
+
+  /**
+   * Replaces the list with tidy-up (tidy-mode.js), on the queue from the latest payload.
+   * Refused while a cleanup action is out. Disarms switch-on-release first, so letting go
+   * of Ctrl mid-triage cannot switch tabs.
+   */
+  function enterTidy(overlay) {
+    if (!overlay || tidy) return;
+    if (pendingAction) {
+      LOG("tidy-up: refused —", pendingAction, "is still running");
+      return;
+    }
+    const container = overlay.querySelector(".tts-container");
+    const el = document.createElement("div");
+    el.className = "tts-tidy";
+    container.insertBefore(el, overlay.querySelector(".tts-toast-anchor"));
+    try {
+      // Looked up now, not at load; a missing tidy-mode.js lands in the catch below.
+      tidy = self.TTS_tidy.mount({
+        container: el,
+        tabs: tabList,
+        queue: tidyQueueIds,
+        send: askWorker,
+        onExit: () => exitTidy(true),
+        onSwitch: (tabId) => switchToTab(tabId),
+        domainOf: getDomain,
+        visitedOf: formatVisited,
+      });
+    } catch (e) {
+      // The list stays as it was.
+      LOG("tidy-up: mount failed", e);
+      el.remove();
+      return;
+    }
+    tidyEl = el;
+    armedMods = null;
+    openedByKey = false;
+    disarmedUntilRelease = true;
+    overlay.querySelector(".tts-list").hidden = true;
+    overlay.querySelector(".tts-hint").hidden = true;
+    const toast = overlay.querySelector(".tts-toast");
+    if (toast) hideToast(toast);
+    paintCleanup(overlay);
+    LOG("entered tidy-up with", tidyQueueIds.length, "tabs (release-to-switch disarmed)");
+  }
+
+  /** Follows a tab Chrome gave a new id (a discard), in the list and in tidy-up. */
+  function replaceTabIdInPage(oldId, newId) {
+    // In place, so the list's click handlers (which read tab.id) follow too.
+    for (const tab of tabList) if (tab.id === oldId) tab.id = newId;
+    if (currentTabId === oldId) currentTabId = newId;
+    tidyQueueIds = tidyQueueIds.map((id) => (id === oldId ? newId : id));
+    if (tidy) tidy.replaceId(oldId, newId);
+  }
+
+  /**
+   * Takes tidy-up down and brings the list back. With `refresh`, asks the worker to
+   * redraw the list in place, since tabs were closed or slept meanwhile. That redraw
+   * does not re-arm switch-on-release, unlike reopening the switcher would.
+   */
+  function exitTidy(refresh) {
+    if (!tidy) return;
+    const view = tidy;
+    tidy = null;
+    try {
+      view.destroy();
+    } catch (e) {
+      LOG("tidy-up destroy failed", e);
+    }
+    const node = tidyEl;
+    tidyEl = null;
+    const overlay = findOverlay();
+    // An overlay that is fading out keeps tidy-up on screen until it is gone.
+    if (!overlay) {
+      LOG("tidy-up closed with the overlay");
+      return;
+    }
+    if (node) node.remove();
+    const list = overlay.querySelector(".tts-list");
+    const hint = overlay.querySelector(".tts-hint");
+    if (list) list.hidden = false;
+    if (hint) hint.hidden = false;
+    paintCleanup(overlay);
+    LOG("left tidy-up", refresh ? "— asking for a redraw" : "");
+    if (refresh) tellWorker("refresh-switcher");
   }
 
   function renderList(list) {
@@ -249,7 +619,26 @@
 
       const title = document.createElement("div");
       title.className = "tts-title";
-      title.textContent = tab.title;
+      // Ahead of the text so a long, ellipsized title cannot push it out of view.
+      if (tab.discarded) {
+        const asleep = document.createElement("span");
+        asleep.className = "tts-asleep";
+        asleep.title = ASLEEP_TITLE;
+        asleep.textContent = "💤";
+        title.appendChild(asleep);
+      }
+      // Own element so a long title ellipsizes while the badge after it stays in view.
+      const titleText = document.createElement("span");
+      titleText.className = "tts-title-text";
+      titleText.textContent = tab.title;
+      title.appendChild(titleText);
+      if (tab.dupCount > 1) {
+        const dup = document.createElement("span");
+        dup.className = "tts-dup";
+        dup.title = tab.dupCount + " tabs open on this page";
+        dup.textContent = "×" + tab.dupCount;
+        title.appendChild(dup);
+      }
       textBlock.appendChild(title);
 
       const domain = document.createElement("div");
@@ -293,30 +682,39 @@
     });
   }
 
-  /** Refresh an already-open overlay in place (used after a sort) — no rebuild flash. */
-  function updateTabs(overlay, tabs, activeTabId, counts, armMods, byKey) {
+  /**
+   * Refresh an already-open overlay in place (after a sort or a sleep) — no rebuild
+   * flash. Takes the whole show-switcher message.
+   */
+  function updateTabs(overlay, message) {
     const keepId = tabList[selectedIndex] && tabList[selectedIndex].id;
-    tabList = tabs;
-    currentTabId = activeTabId;
-    tabCounts = counts || tabCounts;
-    if (byKey) openedByKey = true;
-    armFrom(armMods);
+    tabList = message.tabs;
+    currentTabId = message.activeTabId;
+    tabCounts = message.counts || tabCounts;
+    applyPayload(message);
+    // A refresh (after a sleep, say) is not a key press: arming here would fall back to
+    // whatever modifiers happen to be held and re-arm switch-on-release. Nor is anything
+    // armed under tidy-up.
+    if (!message.refresh && !tidy) {
+      if (message.openedByKey) openedByKey = true;
+      armFrom(message.armMods);
+    }
     const i = tabList.findIndex((t) => t.id === keepId);
     selectedIndex = i >= 0 ? i : 0;
     const list = overlay.querySelector(".tts-list");
     renderList(list);
     paintCounts(overlay);
+    paintCleanup(overlay);
+    paintHint(overlay);
     scrollSelectedIntoView(list);
     LOG("overlay list refreshed, selected index:", selectedIndex);
   }
 
-  function buildHeaderButton(className, label, svg, onClick) {
+  /** A header button whose clicks never leave DOM focus on it. */
+  function buildBareHeaderButton(className, onClick) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = className;
-    btn.setAttribute("aria-label", label);
-    btn.setAttribute("title", label);
-    btn.innerHTML = svg;
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       e.preventDefault();
@@ -328,16 +726,27 @@
     return btn;
   }
 
-  function buildOverlay(tabs, activeTabId, counts, armMods, byKey) {
+  function buildHeaderButton(className, label, svg, onClick) {
+    const btn = buildBareHeaderButton(className, onClick);
+    btn.setAttribute("aria-label", label);
+    btn.setAttribute("title", label);
+    btn.innerHTML = svg;
+    return btn;
+  }
+
+  /** Builds the overlay from a show-switcher message and returns it. */
+  function buildOverlay(message) {
+    const tabs = message.tabs;
     LOG("building overlay with", tabs.length, "tabs");
     removeOverlay();
     tabList = tabs;
-    currentTabId = activeTabId;
-    tabCounts = counts || null;
+    currentTabId = message.activeTabId;
+    tabCounts = message.counts || null;
+    applyPayload(message);
     selectedIndex = tabs.length > 1 ? 1 : 0;
     armedMods = null;
-    openedByKey = !!byKey;
-    armFrom(armMods);
+    openedByKey = !!message.openedByKey;
+    armFrom(message.armMods);
 
     const overlay = document.createElement("div");
     overlay.id = OVERLAY_ID;
@@ -390,12 +799,36 @@
     total.hidden = true;
     subLine.appendChild(total);
 
+    const memory = document.createElement("span");
+    memory.className = "tts-header-memory";
+    memory.title = "Free memory on this computer, as Chrome reports it";
+    memory.hidden = true;
+    subLine.appendChild(memory);
+
     headerMain.appendChild(subLine);
 
     header.appendChild(headerMain);
 
     const actions = document.createElement("div");
     actions.className = "tts-header-actions";
+
+    // Label, count and disabled state are painted by paintCleanup.
+    actions.appendChild(
+      buildBareHeaderButton("tts-header-btn tts-header-sleep", () => requestCleanup("sleep"))
+    );
+    // Shown only while there is something to dedupe; painted by paintCleanup.
+    const dedupeBtn = buildBareHeaderButton("tts-header-btn tts-header-dedupe", () =>
+      requestCleanup("dedupe")
+    );
+    dedupeBtn.hidden = true;
+    actions.appendChild(dedupeBtn);
+
+    // Disabled state and title are painted by paintCleanup.
+    const tidyBtn = buildBareHeaderButton("tts-header-btn tts-header-tidy", () =>
+      enterTidy(findOverlay())
+    );
+    tidyBtn.textContent = "Tidy up";
+    actions.appendChild(tidyBtn);
 
     actions.appendChild(
       buildHeaderButton(
@@ -431,15 +864,22 @@
     renderList(list);
     container.appendChild(list);
 
+    // Zero-height, in flow between the list and the legend: the toast hangs above it, so
+    // it can never cover the legend however many lines that wraps to, and showing or
+    // hiding it never shifts the list.
+    const toastAnchor = document.createElement("div");
+    toastAnchor.className = "tts-toast-anchor";
+    container.appendChild(toastAnchor);
+
     const hint = document.createElement("div");
     hint.className = "tts-hint";
-    hint.innerHTML =
-      OK.hint(overlayKeyState) + ' &nbsp; <span class="tts-key">S</span> sort tabs';
     container.appendChild(hint);
 
     overlay.appendChild(container);
-    // After the container is attached — paintCounts looks the pill up through `overlay`.
+    // After the container is attached — the painters look their elements up through `overlay`.
     paintCounts(overlay);
+    paintCleanup(overlay);
+    paintHint(overlay);
     document.documentElement.appendChild(overlay);
 
     requestAnimationFrame(() => {
@@ -457,6 +897,7 @@
     document.addEventListener("keydown", handleKeyDown, true);
     document.addEventListener("keyup", handleKeyUp, true);
     LOG("overlay shown, selected index:", selectedIndex);
+    return overlay;
   }
 
   function updateSelection(list) {
@@ -475,11 +916,42 @@
   }
 
   function handleKeyDown(e) {
-    const overlay = document.getElementById(OVERLAY_ID);
+    const overlay = findOverlay();
     if (!overlay) return;
 
-    const list = overlay.querySelector(".tts-list");
     const k = overlayKeyState;
+    // Tidy-up owns the keyboard while it is open. Of the overlay's own bindings only
+    // the configured close key still works, and it leaves tidy-up (as Escape does), not
+    // the overlay. Nothing arms switch-on-release meanwhile.
+    if (tidy) {
+      if (tidy.handleKey(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (matchKey(e, k.close)) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.repeat) return;
+        LOG("close key pressed in tidy-up, back to the list");
+        tidy.exit();
+        return;
+      }
+      // Nothing typed may reach the page behind (its own shortcuts, a held T
+      // repeating), nor Tab / arrows / paging keys (focus leaving the overlay, the page
+      // scrolling). Browser chords pass, except on tidy-up's own letters.
+      // Autofill can send a keydown without a key.
+      const typed = typeof e.key === "string" && e.key.length === 1;
+      const ownLetter = typed && TIDY_LETTERS.indexOf(e.key.toLowerCase()) !== -1;
+      const bare = !e.ctrlKey && !e.altKey && !e.metaKey;
+      if (ownLetter || (bare && (typed || TIDY_NAV_KEYS.indexOf(e.key) !== -1))) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      return;
+    }
+
+    const list = overlay.querySelector(".tts-list");
     armFrom(readMods(e));
 
     function goPrev() {
@@ -530,12 +1002,40 @@
       return;
     }
     // Reached only when the configured keys above did not claim the event, so a user
-    // who rebinds navigation to S keeps that binding.
-    if (isBareKey(e, ["s", "S"])) {
+    // who rebinds navigation to S keeps that binding. letterTaken says the same for the
+    // legend, and also covers what matchKey lets past (a held Shift on T, say).
+    if (!letterTaken("s") && isBareKey(e, ["s", "S"])) {
       if (e.repeat) return;
       e.preventDefault();
       e.stopPropagation();
       requestSort();
+      return;
+    }
+    // Same rule as S: a configured binding on Z was matched above and wins. Swallowed
+    // even with nothing to sleep, so it never reaches the page (Gmail's undo, say).
+    if (!letterTaken("z") && isBareKey(e, ["z", "Z"])) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat) return;
+      requestCleanup("sleep");
+      return;
+    }
+    // Same shape as Z: a configured binding on D wins, and D is swallowed either way.
+    if (!letterTaken("d") && isBareKey(e, ["d", "D"])) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat) return;
+      requestCleanup("dedupe");
+      return;
+    }
+    // Same shape as Z and D. Refused while a cleanup action is out, but still swallowed.
+    // Forgives the armed chord's Shift (Alt+Shift+Q, say): entering tidy-up only
+    // disarms, so a held Shift cannot make it do anything the user did not mean.
+    if (!letterTaken("t") && isBareKey(e, ["t", "T"], true)) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat) return;
+      enterTidy(overlay);
       return;
     }
   }
@@ -546,7 +1046,13 @@
    * on, so with it off this is two boolean reads per keyup.
    */
   function handleKeyUp(e) {
-    if (!document.getElementById(OVERLAY_ID)) return;
+    if (!findOverlay()) return;
+    // Letting go of anything during tidy-up never switches tabs.
+    if (tidy) return;
+    if (disarmedUntilRelease && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      disarmedUntilRelease = false;
+      LOG("all modifiers released after a cleanup action — arming allowed again");
+    }
     if (!overlayKeyState.commitOnRelease) return;
     // Logged for every keyup so an empty log distinguishes "we decided not to commit"
     // from "this page is not receiving key events at all".
@@ -579,8 +1085,11 @@
     document.removeEventListener("keydown", handleKeyDown, true);
     document.removeEventListener("keyup", handleKeyUp, true);
     armedMods = null;
-    const overlay = document.getElementById(OVERLAY_ID);
+    const overlay = findOverlay();
     if (overlay) {
+      // From here on findOverlay() no longer sees it, so a redraw or key arriving during
+      // the fade cannot touch it.
+      overlay.classList.add(CLOSING_CLASS);
       overlay.classList.remove("tts-visible");
       overlay.addEventListener("transitionend", () => overlay.remove(), {
         once: true,
@@ -589,10 +1098,20 @@
       LOG("overlay removed");
       tellWorker("overlay-closed");
     }
+    // After the overlay is marked closing, so tidy-up stays on screen while it fades.
+    exitTidy(false);
+    tidyQueueIds = [];
     tabList = [];
     selectedIndex = 0;
     currentTabId = null;
     tabCounts = null;
+    sleepCount = 0;
+    dedupeCount = 0;
+    memoryText = "";
+    pendingAction = null;
+    disarmedUntilRelease = false;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = null;
     openedByKey = false;
   }
 
@@ -602,9 +1121,17 @@
       sendResponse({ ok: true });
       return;
     }
+    if (message.action === "tab-replaced") {
+      LOG("tab replaced:", message.oldId, "->", message.newId);
+      replaceTabIdInPage(message.oldId, message.newId);
+      return;
+    }
     if (message.action === "advance-selection") {
-      const overlay = document.getElementById(OVERLAY_ID);
-      if (overlay) {
+      const overlay = findOverlay();
+      if (overlay && tidy) {
+        // Tidy-up has no list selection to move, and must not arm switch-on-release.
+        LOG("advance-selection during tidy-up — ignored");
+      } else if (overlay) {
         // The chord that got us here is still held, so this is also our chance to
         // identify it if the overlay went up some other way (a toolbar click, say).
         if (message.openedByKey) openedByKey = true;
@@ -620,12 +1147,33 @@
     }
     if (message.action === "show-switcher") {
       LOG("show-switcher received with", message.tabs.length, "tabs");
-      const open = document.getElementById(OVERLAY_ID);
-      if (open) {
-        updateTabs(open, message.tabs, message.activeTabId, message.counts, message.armMods, message.openedByKey);
-      } else {
-        buildOverlay(message.tabs, message.activeTabId, message.counts, message.armMods, message.openedByKey);
+      const open = findOverlay();
+      if (!open && message.refresh) {
+        // The user closed the overlay while the worker was busy (Esc during a sleep);
+        // a redraw must not bring it back.
+        LOG("refresh for an overlay that is no longer open — ignored");
+        return;
       }
+      let overlay = open;
+      if (open) {
+        updateTabs(open, message);
+      } else {
+        overlay = buildOverlay(message);
+      }
+      // updateTabs only redraws the hidden list under tidy-up; a toast would float over
+      // the card instead of the list it reports on.
+      if (message.result && !tidy) showToast(overlay, message.result);
     }
+  });
+
+  /**
+   * The worker skips a redraw when the page asking is no longer the active tab, so a
+   * Sleep or Dedupe answered while the user was on another tab leaves "Sleeping…" /
+   * "Deduping…" behind. Coming back to the page asks for that redraw.
+   */
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || !pendingAction || !findOverlay()) return;
+    LOG("page visible again with", pendingAction, "still pending — asking for a redraw");
+    tellWorker("refresh-switcher");
   });
 })();

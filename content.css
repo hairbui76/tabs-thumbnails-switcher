@@ -111,6 +111,21 @@
   display: none;
 }
 
+.tts-header-memory {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.28);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  cursor: default;
+}
+
+.tts-header-memory[hidden] {
+  display: none;
+}
+
 .tts-header-actions {
   display: flex;
   align-items: center;
@@ -148,6 +163,154 @@
 .tts-header-btn:focus-visible {
   outline: 2px solid rgba(99, 131, 255, 0.7);
   outline-offset: 1px;
+}
+
+/* Text buttons ("Sleep 12", "Dedupe 3", "Tidy up") size to their label instead of the 36px icon square. */
+.tts-header-sleep,
+.tts-header-dedupe,
+.tts-header-tidy {
+  width: auto;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  /* The first text button in the header; keep page styles from leaking in. */
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.tts-header-sleep[disabled],
+.tts-header-sleep[disabled]:hover,
+.tts-header-sleep[disabled]:active,
+.tts-header-dedupe[disabled],
+.tts-header-dedupe[disabled]:hover,
+.tts-header-dedupe[disabled]:active,
+.tts-header-tidy[disabled],
+.tts-header-tidy[disabled]:hover,
+.tts-header-tidy[disabled]:active,
+.tts-header-sort[disabled],
+.tts-header-sort[disabled]:hover,
+.tts-header-sort[disabled]:active {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.2);
+  cursor: default;
+}
+
+/* .tts-header-btn sets display, which would otherwise beat the hidden attribute. */
+.tts-header-dedupe[hidden] {
+  display: none;
+}
+
+.tts-asleep {
+  margin-right: 5px;
+  font-size: 12px;
+  cursor: help;
+}
+
+/* "×4" after the title: how many tabs in this window show the same page. */
+.tts-dup {
+  flex-shrink: 0;
+  margin-left: 6px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  color: #ffd8a8;
+  background: rgba(255, 146, 43, 0.16);
+  border: 1px solid rgba(255, 146, 43, 0.4);
+  border-radius: 4px;
+  cursor: help;
+}
+
+/*
+ * Zero-height, in flow between the list and the key legend. The toast hangs above it,
+ * so it can never cover the legend, and showing it never shifts the list.
+ */
+.tts-toast-anchor {
+  position: relative;
+  height: 0;
+  flex-shrink: 0;
+}
+
+.tts-toast {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 8px;
+  width: fit-content;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #e4e4e7;
+  background: rgba(48, 48, 58, 0.98);
+  border: 1px solid rgba(99, 131, 255, 0.4);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  animation: tts-toast-in 0.15s ease;
+  z-index: 1;
+  /* Clicks fall through to the cards underneath; only the toast's buttons take them. */
+  pointer-events: none;
+}
+
+.tts-toast button {
+  pointer-events: auto;
+}
+
+.tts-toast-undo {
+  flex-shrink: 0;
+  margin: -3px -6px -3px 0;
+  padding: 3px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: normal;
+  text-transform: none;
+  color: #9db1ff;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.tts-toast-undo:hover {
+  background: rgba(99, 131, 255, 0.18);
+  color: #dbe2ff;
+}
+
+/* While a cleanup action runs (see paintCleanup). */
+.tts-toast-undo[disabled],
+.tts-toast-undo[disabled]:hover {
+  background: transparent;
+  color: rgba(157, 177, 255, 0.35);
+  cursor: default;
+}
+
+.tts-toast-undo:focus-visible {
+  outline: 2px solid rgba(99, 131, 255, 0.7);
+  outline-offset: 1px;
+}
+
+/* Wraps rather than ellipsizes: the toast is the only place the result is reported. */
+.tts-toast-text {
+  min-width: 0;
+}
+
+@keyframes tts-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .tts-visited {
@@ -235,11 +398,20 @@
   min-width: 0;
 }
 
+/* A row so the title text ellipsizes while 💤, ×N and "current" stay in view. */
 .tts-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
   font-size: 13px;
   font-weight: 500;
   color: #e4e4e7;
   white-space: nowrap;
+  overflow: hidden;
+}
+
+.tts-title-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -298,6 +470,194 @@
   font-family: inherit;
 }
 
+/* Tidy-up replaces the list (and its legend) while it is open. */
+.tts-list[hidden],
+.tts-hint[hidden] {
+  display: none;
+}
+
+/* Takes the list's place: a scrolling area over a legend that stays put. */
+.tts-tidy {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tts-tidy-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 12px 18px;
+}
+
+.tts-tidy-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.tts-tidy-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tts-tidy-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+}
+
+.tts-tidy-counter {
+  align-self: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #dbe2ff;
+  background: rgba(99, 131, 255, 0.18);
+  border: 1px solid rgba(99, 131, 255, 0.4);
+  border-radius: 999px;
+  padding: 1px 10px;
+  white-space: nowrap;
+}
+
+.tts-tidy-body {
+  transition: opacity 0.12s ease;
+}
+
+/* A request is out: the card stays, dimmed, until the answer moves on. */
+.tts-tidy-body.tts-tidy-busy {
+  opacity: 0.55;
+}
+
+.tts-tidy-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 2px solid rgba(99, 131, 255, 0.5);
+  border-radius: 12px;
+  background: rgba(99, 131, 255, 0.08);
+}
+
+.tts-tidy-thumbnail,
+.tts-tidy-thumbnail-placeholder {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  max-height: 42vh;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-sizing: border-box;
+}
+
+.tts-tidy-thumbnail {
+  object-fit: cover;
+  object-position: top;
+}
+
+.tts-tidy-thumbnail-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.2);
+}
+
+/* Same row layout as the list's title: the text ellipsizes, 💤 and ×N stay in view. */
+.tts-tidy-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #e4e4e7;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.tts-tidy-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tts-tidy-meta {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tts-tidy-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 10px;
+  text-align: center;
+}
+
+.tts-tidy-summary-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #e4e4e7;
+}
+
+.tts-tidy-summary-text {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.tts-tidy-back {
+  margin-top: 8px;
+  padding: 6px 14px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: normal;
+  text-transform: none;
+  color: #dbe2ff;
+  background: rgba(99, 131, 255, 0.18);
+  border: 1px solid rgba(99, 131, 255, 0.4);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.tts-tidy-back:hover {
+  background: rgba(99, 131, 255, 0.28);
+}
+
+.tts-tidy-back:focus-visible {
+  outline: 2px solid rgba(99, 131, 255, 0.7);
+  outline-offset: 1px;
+}
+
+.tts-tidy-error {
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  color: #ffa8a8;
+}
+
+.tts-tidy-error[hidden] {
+  display: none;
+}
+
+/* The tidy-up key legend, styled like the list's .tts-hint it stands in for. */
+.tts-tidy-legend {
+  flex-shrink: 0;
+  padding: 10px 18px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.3);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  text-align: center;
+}
+
 @media (prefers-color-scheme: light) {
   #tts-overlay {
     color: #27272a;
@@ -338,6 +698,10 @@
     color: rgba(0, 0, 0, 0.35);
   }
 
+  .tts-header-memory {
+    color: rgba(0, 0, 0, 0.35);
+  }
+
   .tts-header-btn {
     color: rgba(0, 0, 0, 0.45);
   }
@@ -350,6 +714,103 @@
   .tts-header-btn:active {
     background: rgba(59, 91, 219, 0.14);
     color: #2338a8;
+  }
+
+  .tts-header-sleep[disabled],
+  .tts-header-sleep[disabled]:hover,
+  .tts-header-sleep[disabled]:active,
+  .tts-header-dedupe[disabled],
+  .tts-header-dedupe[disabled]:hover,
+  .tts-header-dedupe[disabled]:active,
+  .tts-header-tidy[disabled],
+  .tts-header-tidy[disabled]:hover,
+  .tts-header-tidy[disabled]:active,
+  .tts-header-sort[disabled],
+  .tts-header-sort[disabled]:hover,
+  .tts-header-sort[disabled]:active {
+    background: transparent;
+    color: rgba(0, 0, 0, 0.22);
+  }
+
+  .tts-tidy-counter {
+    color: #2338a8;
+    background: rgba(59, 91, 219, 0.12);
+    border-color: rgba(59, 91, 219, 0.35);
+  }
+
+  .tts-tidy-card {
+    background: rgba(59, 91, 219, 0.06);
+    border-color: rgba(59, 91, 219, 0.4);
+  }
+
+  .tts-tidy-thumbnail,
+  .tts-tidy-thumbnail-placeholder {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  .tts-tidy-thumbnail-placeholder {
+    color: rgba(0, 0, 0, 0.25);
+  }
+
+  .tts-tidy-title,
+  .tts-tidy-summary-title {
+    color: #27272a;
+  }
+
+  .tts-tidy-meta {
+    color: rgba(0, 0, 0, 0.45);
+  }
+
+  .tts-tidy-summary-text {
+    color: rgba(0, 0, 0, 0.6);
+  }
+
+  .tts-tidy-back {
+    color: #2338a8;
+    background: rgba(59, 91, 219, 0.1);
+    border-color: rgba(59, 91, 219, 0.35);
+  }
+
+  .tts-tidy-back:hover {
+    background: rgba(59, 91, 219, 0.18);
+  }
+
+  .tts-tidy-error {
+    color: #c92a2a;
+  }
+
+  .tts-tidy-legend {
+    color: rgba(0, 0, 0, 0.35);
+    border-top-color: rgba(0, 0, 0, 0.06);
+  }
+
+  .tts-dup {
+    color: #a34a00;
+    background: rgba(253, 126, 20, 0.1);
+    border-color: rgba(253, 126, 20, 0.4);
+  }
+
+  .tts-toast {
+    color: #27272a;
+    background: rgba(255, 255, 255, 0.99);
+    border-color: rgba(59, 91, 219, 0.35);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
+  }
+
+  .tts-toast-undo {
+    color: #2f4ac2;
+  }
+
+  .tts-toast-undo:hover {
+    background: rgba(59, 91, 219, 0.12);
+    color: #2338a8;
+  }
+
+  .tts-toast-undo[disabled],
+  .tts-toast-undo[disabled]:hover {
+    background: transparent;
+    color: rgba(47, 74, 194, 0.35);
   }
 
   .tts-card:hover {
@@ -397,7 +858,8 @@
     border-color: rgba(0, 0, 0, 0.12);
   }
 
-  .tts-list::-webkit-scrollbar-thumb {
+  .tts-list::-webkit-scrollbar-thumb,
+  .tts-tidy-scroll::-webkit-scrollbar-thumb {
     background: rgba(0, 0, 0, 0.15);
   }
 }

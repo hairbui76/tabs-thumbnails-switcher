@@ -7,7 +7,9 @@
     "tabs",
     "activeTab",
     "scripting",
-    "storage"
+    "storage",
+    "system.memory",
+    "sessions"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -54,6 +56,7 @@
       ],
       "js": [
         "overlay-keys.js",
+        "tidy-mode.js",
         "content.js"
       ],
       "css": [

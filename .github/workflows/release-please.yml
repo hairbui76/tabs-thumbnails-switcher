@@ -45,6 +45,8 @@ jobs:
             background.js \
             content.css \
             content.js \
+            tab-logic.js \
+            tidy-mode.js \
             key-gesture.js \
             overlay-keys.js \
             debug-helpers.js \

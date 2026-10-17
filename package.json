@@ -22,6 +22,9 @@
     "tabs",
     "thumbnails"
   ],
+  "scripts": {
+    "test": "node --test"
+  },
   "engines": {
     "node": ">=18"
   }
