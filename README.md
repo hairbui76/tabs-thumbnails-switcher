@@ -20,6 +20,8 @@ A Chrome extension that switches tabs using **most recently used (MRU)** order, 
 4. Click **Load unpacked** and select this folder
 5. The extension is now active
 
+Besides `tabs`, `storage` and friends, the extension asks for `system.memory`, to read the machine's free memory for the [Sleep](#sleep) figure, and `sessions`, so Undo can bring closed tabs back from Chrome's recently-closed list with their history. Because `sessions` comes together with `tabs`, Chrome's install (or update) prompt warns that it can **"Read your browsing history on all your signed-in devices"**. The extension only ever reads the recently-closed list, to find the tabs it closed itself.
+
 ## Options (debug console)
 
 - Right-click the extension icon → **Options**, or from `chrome://extensions` open **Extension options** for this extension.
@@ -45,13 +47,16 @@ A Chrome extension that switches tabs using **most recently used (MRU)** order, 
 | **Tab count** (header, next to the title) | How many tabs are open — see [Tab count](#tab-count). |
 | **Sort** (header, left of the gear) | Reorders the list **and the real Chrome tab strip** — see [Sorting](#sorting). |
 | S | Same as the Sort button |
+| **Sleep N** (header) / Z | Puts background tabs to sleep — see [Sleep](#sleep). |
+| **Dedupe N** (header) / D | Closes duplicate tabs, with Undo — see [Duplicate tabs](#duplicate-tabs). Shown only when there is something to close. |
+| **Tidy up** (header) / T | Goes through the tabs one at a time — see [Tidy-up](#tidy-up). |
 | Tab / Arrow Down | Move selection down |
 | Shift+Tab / Arrow Up | Move selection up |
 | Enter | Switch to selected tab |
 | Escape | Close the switcher |
 | Click a row | Switch to that tab |
 
-If a configured navigation key is rebound to **S**, that binding wins and the sort shortcut is skipped.
+S, Z, D and T are plain letters with no modifier. If one of your configured keys (next, previous, switch, close) is bound to the same letter, that binding wins and the shortcut is skipped.
 
 ### Switch on modifier release (Alt+Tab style)
 
@@ -103,6 +108,77 @@ Tabs never leave the run they belong to, so nothing gets scrambled:
 - Each stretch of **ungrouped** tabs is sorted within itself. With no tab groups (the common case) that is the whole strip, so the sort is global.
 
 The recent head is picked once per window, then each run leads with whichever of those tabs it happens to contain — so you get one top 10 overall, not a top 10 per group. Tabs never activated in this session have no visit time, are not eligible for the head, and land at the end of their site block.
+
+## Sleep
+
+The **Sleep N** button in the switcher header (or **Z** while it is open) puts the background tabs of the current window to sleep: Chrome discards each one (`chrome.tabs.discard`), which frees the memory its page was using. A sleeping tab stays in the tab strip and in the switcher, keeps its thumbnail, and carries a **💤** marker. Open it and Chrome reloads the page.
+
+N is the number of tabs that would go to sleep. These are left awake:
+
+- **The current tab** — you are looking at it.
+- **Pinned tabs** — usually mail or chat, which should keep receiving.
+- **Tabs playing sound** — music or a call would stop.
+- **Tabs already asleep** — nothing left to free.
+- **Tabs Chrome marks as not auto-discardable** — you (on `chrome://discards`) or another extension asked Chrome to keep them alive.
+
+At zero the button is disabled.
+
+On the muted line under the title, the header shows a memory line — **`RAM: 2.9 GB free of 16 GB`** — read from `chrome.system.memory`. If Chrome cannot report memory, the line is hidden.
+
+After a sleep the switcher redraws in place and a line at the bottom says what happened: `Put 12 tabs to sleep · freed ~1.8 GB`. Tabs Chrome refused to discard are counted at the end (`· 2 could not sleep`).
+
+Take the GB figure with a pinch of salt. Chrome gives extensions no per-tab memory figure, so it is the machine's **free memory before the sleep versus about 1.5 seconds after** — the change across the whole computer, not just Chrome. Other applications allocating or freeing memory in that window move it either way. When free memory did not go up (by at least 0.1 GB), no figure is shown, rather than a zero, a negative number or an estimate.
+
+## Duplicate tabs
+
+Two tabs are **duplicates** when they show the same page: the same URL once the `#fragment` is dropped. The query string still counts, so `?page=2` and `?page=3` are different pages. Only the current window is looked at, the same tabs the switcher lists. Blank tabs (`about:blank`, or a tab still loading with no URL yet) are never duplicates of each other.
+
+Every copy of a duplicated page carries a **×N** badge next to its title, N being how many tabs show that page.
+
+The **Dedupe N** button (or **D**) closes all copies but one. N is how many tabs would close; the button only appears when that is more than zero. The copy that stays is:
+
+1. **the current tab**, if it is one of them, else
+2. **a pinned copy**, else
+3. **the most recently used copy**.
+
+The current tab and pinned tabs are **never closed**, so two pinned copies of the same page both stay. The list is worked out again from the live tabs when you press the button, not taken from what the switcher was showing.
+
+Afterwards the switcher redraws and a line at the bottom reads `Closed 7 duplicate tabs — the newest copy stays open`, with an **Undo** button, for about 8 seconds.
+
+**Undo** brings the closed tabs back where they were. Each one is restored from Chrome's recently-closed list (`chrome.sessions`, the same list **Ctrl+Shift+T** uses), which keeps its back/forward history. Chrome keeps only the **25 most recent** closed tabs and windows there, so if you have closed a lot since, the older ones are no longer listed: those are reopened by URL in a fresh tab, without history. After Undo the tab you were on stays active.
+
+The extension remembers the **last 20** Dedupe and tidy-up closes it can undo, for the rest of the browser session. They are stored rather than kept in memory, so Undo still works after Chrome has stopped the idle service worker; they are gone once the browser closes.
+
+## Tidy-up
+
+The **Tidy up** button (or **T**) swaps the list for a single large card and walks you through this window's tabs **one at a time**, so a long row of forgotten tabs can be dealt with by keyboard. Each card shows the thumbnail, title, site, last visit and the 💤 / ×N markers; a counter above it reads `37 left`.
+
+Tabs come **least recently visited first**, by the last-visit time Chrome keeps for each tab; a tab with no visit time at all comes before the rest. The current tab and pinned tabs are not included.
+
+| Key | Action |
+|-----|--------|
+| X | Close the tab, go to the next |
+| K | Keep it, go to the next |
+| Z | Put it to sleep, go to the next |
+| U | Undo the last step — reopens a closed tab, or steps back to the card you kept or slept |
+| Enter | Switch to that tab and close the switcher |
+| Escape | Leave tidy-up, back to the list |
+
+The keys are fixed and take no modifier. Your configured close key leaves tidy-up too; the other switcher keys (navigation, S, D) do nothing until you are back in the list, and the Sleep and Dedupe buttons are disabled meanwhile.
+
+**Z in tidy-up** sleeps the tab on the card even when the **Sleep N** button would leave it alone — one playing sound, say, or one marked not auto-discardable — because you picked that tab yourself. It shows no memory figure.
+
+**U** steps back through what you did. Undoing a close reopens the tab the same way the Dedupe Undo does, history included; undoing a keep or a sleep just brings the card back (a slept tab stays asleep).
+
+At the end of the queue a summary replaces the card — `Closed 12 · kept 20 · slept 5` — with a button back to the list (Enter does the same). If there was nothing to go through, tidy-up opens straight onto that summary.
+
+The rest of the details:
+
+- Every key acts at once; leaving halfway keeps whatever you did, and the list redraws with it.
+- A tab you closed elsewhere while tidying is skipped without a word. An action Chrome refuses leaves the card where it is with a short error; press K to move past it.
+- One action at a time: a fast double press cannot close two tabs.
+- With [switch on modifier release](#switch-on-modifier-release-alttab-style) on, entering tidy-up **disarms** it: letting go of Ctrl mid-triage never switches tabs, and back in the list it stays off until every modifier has been let go. Sleep and Dedupe disarm it the same way.
+- The queue and what you did live in the switcher only; close the switcher and tidy-up starts over next time.
 
 ## Binding Tab shortcuts
 
